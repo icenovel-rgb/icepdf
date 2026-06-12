@@ -1,0 +1,317 @@
+/**
+ * mupdf 문서 엔진 — worker_thread에서 실행.
+ * 문서 1개를 소유하고 RPC 메시지로 조작한다. 모든 좌표는 fitz 공간.
+ */
+import { parentPort } from 'node:worker_threads'
+import { readFileSync, writeFileSync, renameSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
+import * as mupdf from 'mupdf'
+import type { BookmarkItem, DocInfo, Quad, Rect } from '../../shared/types'
+
+interface State {
+  doc: mupdf.PDFDocument | null
+  path: string | null
+  /** 페이지 구조 변경 시 비워야 하는 캐시 */
+  stCache: Map<number, mupdf.StructuredText>
+}
+
+const state: State = { doc: null, path: null, stCache: new Map() }
+
+function requireDoc(): mupdf.PDFDocument {
+  if (!state.doc) throw new Error('열린 문서가 없습니다')
+  return state.doc
+}
+
+function invalidate(): void {
+  state.stCache.clear()
+}
+
+function getStructuredText(page: number): mupdf.StructuredText {
+  const cached = state.stCache.get(page)
+  if (cached) return cached
+  const st = requireDoc().loadPage(page).toStructuredText('preserve-whitespace')
+  state.stCache.set(page, st)
+  return st
+}
+
+// ── 책갈피 ──
+
+interface MupdfOutlineNode {
+  title?: string
+  uri?: string
+  page?: number
+  down?: MupdfOutlineNode[]
+}
+
+function readOutline(): BookmarkItem[] {
+  const doc = requireDoc()
+  const walk = (items: MupdfOutlineNode[] | undefined): BookmarkItem[] =>
+    (items ?? []).map((it) => ({
+      title: it.title ?? '(제목 없음)',
+      page: it.page ?? (it.uri ? Math.max(0, doc.resolveLink(it.uri)) : 0),
+      children: walk(it.down)
+    }))
+  return walk((doc.loadOutline() as MupdfOutlineNode[] | null) ?? undefined)
+}
+
+function writeOutline(items: BookmarkItem[]): void {
+  const doc = requireDoc()
+  const it = doc.outlineIterator()
+  while (it.item()) it.delete()
+  const insertLevel = (nodes: BookmarkItem[]): void => {
+    for (const node of nodes) {
+      it.insert({
+        title: node.title,
+        open: false,
+        uri: doc.formatLinkURI({
+          type: 'XYZ',
+          chapter: 0,
+          page: Math.min(node.page, doc.countPages() - 1),
+          x: 0,
+          y: 0,
+          width: 0,
+          height: 0,
+          zoom: 0
+        })
+      })
+      if (node.children.length) {
+        it.prev()
+        it.down()
+        insertLevel(node.children)
+        it.up()
+        it.next()
+      }
+    }
+  }
+  insertLevel(items)
+}
+
+function docInfo(): DocInfo {
+  const doc = requireDoc()
+  const pageCount = doc.countPages()
+  const pages = []
+  for (let i = 0; i < pageCount; i++) {
+    const [x0, y0, x1, y1] = doc.loadPage(i).getBounds()
+    pages.push({ width: x1 - x0, height: y1 - y0 })
+  }
+  return {
+    filePath: state.path,
+    pageCount,
+    pages,
+    outline: readOutline(),
+    title: state.path ? basename(state.path) : '제목 없음'
+  }
+}
+
+// ── RPC 연산 ──
+
+const ops: Record<string, (args: any) => unknown> = {
+  open({ path }: { path: string }) {
+    state.doc?.destroy?.()
+    const buf = readFileSync(path)
+    state.doc = mupdf.Document.openDocument(buf, 'application/pdf') as mupdf.PDFDocument
+    state.path = path
+    invalidate()
+    return docInfo()
+  },
+
+  docInfo() {
+    return docInfo()
+  },
+
+  render({ page, scale }: { page: number; scale: number }) {
+    const p = requireDoc().loadPage(page)
+    const pix = p.toPixmap(mupdf.Matrix.scale(scale, scale), mupdf.ColorSpace.DeviceRGB, false, true)
+    const png = pix.asPNG()
+    const result = { png: png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength), width: pix.getWidth(), height: pix.getHeight() }
+    pix.destroy()
+    return result
+  },
+
+  selection({ page, ax, ay, bx, by }: { page: number; ax: number; ay: number; bx: number; by: number }) {
+    const st = getStructuredText(page)
+    const quads = st.highlight([ax, ay], [bx, by], 1000) as unknown as Quad[]
+    const text = st.copy([ax, ay], [bx, by])
+    return { quads, text }
+  },
+
+  search({ needle, maxHits }: { needle: string; maxHits: number }) {
+    const doc = requireDoc()
+    const hits: { page: number; quads: Quad[] }[] = []
+    for (let i = 0; i < doc.countPages() && hits.length < maxHits; i++) {
+      const found = getStructuredText(i).search(needle) as unknown as Quad[][]
+      for (const quads of found) {
+        hits.push({ page: i, quads })
+        if (hits.length >= maxHits) break
+      }
+    }
+    return hits
+  },
+
+  addHighlight({ page, quads, color, opacity }: { page: number; quads: Quad[]; color: [number, number, number]; opacity: number }) {
+    const p = requireDoc().loadPage(page)
+    // mupdf Highlight 주석은 끝이 둥글다 → quad별 테두리 없는 Square로 각진 형광펜 구현
+    for (const q of quads) {
+      const x0 = Math.min(q[0], q[4])
+      const y0 = Math.min(q[1], q[3])
+      const x1 = Math.max(q[2], q[6])
+      const y1 = Math.max(q[5], q[7])
+      const annot = p.createAnnotation('Square')
+      annot.setRect([x0, y0, x1, y1])
+      annot.setColor([]) // 테두리 없음
+      annot.setInteriorColor(color)
+      annot.setBorderWidth(0)
+      annot.setOpacity(opacity)
+      annot.update()
+    }
+    return { count: p.getAnnotations().length }
+  },
+
+  addImage({ page, rect, png }: { page: number; rect: Rect; png: ArrayBuffer }) {
+    const p = requireDoc().loadPage(page)
+    const annot = p.createAnnotation('Stamp')
+    annot.setRect(rect)
+    annot.setStampImage(new mupdf.Image(new Uint8Array(png)))
+    annot.update()
+    const annots = p.getAnnotations()
+    return { index: annots.length - 1, count: annots.length }
+  },
+
+  updateStamp({ page, index, rect, png }: { page: number; index: number; rect: Rect; png: ArrayBuffer }) {
+    const p = requireDoc().loadPage(page)
+    const annot = p.getAnnotations()[index]
+    if (!annot) throw new Error('해당 이미지 주석이 없습니다')
+    annot.setStampImage(new mupdf.Image(new Uint8Array(png)))
+    annot.setRect(rect)
+    annot.update()
+    return { count: p.getAnnotations().length }
+  },
+
+  setAnnotRect({ page, index, rect }: { page: number; index: number; rect: Rect }) {
+    const p = requireDoc().loadPage(page)
+    const annot = p.getAnnotations()[index]
+    if (!annot) throw new Error('해당 주석이 없습니다')
+    annot.setRect(rect)
+    annot.update()
+    return { count: p.getAnnotations().length }
+  },
+
+  listAnnots({ page }: { page: number }) {
+    const p = requireDoc().loadPage(page)
+    return p.getAnnotations().map((a, index) => ({
+      index,
+      type: a.getType(),
+      rect: a.getBounds() as unknown as Rect
+    }))
+  },
+
+  hitAnnot({ page, x, y, types }: { page: number; x: number; y: number; types?: string[] }) {
+    const p = requireDoc().loadPage(page)
+    const annots = p.getAnnotations()
+    // 위에 그려진 주석이 우선 — 역순 탐색
+    for (let i = annots.length - 1; i >= 0; i--) {
+      const a = annots[i]
+      const type = a.getType()
+      if (types && !types.includes(type)) continue
+      const [x0, y0, x1, y1] = a.getBounds() as unknown as Rect
+      if (x >= x0 && x <= x1 && y >= y0 && y <= y1) {
+        return { index: i, type, rect: [x0, y0, x1, y1] as Rect }
+      }
+    }
+    return null
+  },
+
+  deleteAnnot({ page, index }: { page: number; index: number }) {
+    const p = requireDoc().loadPage(page)
+    const annots = p.getAnnotations()
+    if (!annots[index]) throw new Error('해당 주석이 없습니다')
+    p.deleteAnnotation(annots[index])
+    return { count: p.getAnnotations().length }
+  },
+
+  insertBlank({ at }: { at: number }) {
+    const doc = requireDoc()
+    const ref = Math.max(0, Math.min(at, doc.countPages() - 1))
+    const [x0, y0, x1, y1] = doc.loadPage(ref).getBounds()
+    const blank = doc.addPage([0, 0, x1 - x0, y1 - y0], 0, doc.addObject({}), '')
+    doc.insertPage(at, blank)
+    invalidate()
+    return docInfo()
+  },
+
+  insertFromPdf({ at, path }: { at: number; path: string }) {
+    const doc = requireDoc()
+    const src = mupdf.Document.openDocument(readFileSync(path), 'application/pdf') as mupdf.PDFDocument
+    const n = src.countPages()
+    for (let i = 0; i < n; i++) {
+      doc.graftPage(at + i, src, i)
+    }
+    src.destroy?.()
+    invalidate()
+    return docInfo()
+  },
+
+  deletePage({ page }: { page: number }) {
+    const doc = requireDoc()
+    if (doc.countPages() <= 1) throw new Error('마지막 페이지는 삭제할 수 없습니다')
+    doc.deletePage(page)
+    invalidate()
+    return docInfo()
+  },
+
+  setOutline({ items }: { items: BookmarkItem[] }) {
+    writeOutline(items)
+    return docInfo()
+  },
+
+  save({ path }: { path: string }) {
+    const doc = requireDoc()
+    const buf = doc.saveToBuffer('garbage=compact')
+    const bytes = buf.asUint8Array()
+    const tmp = join(dirname(path), `.${basename(path)}.icepdf-tmp`)
+    writeFileSync(tmp, bytes)
+    renameSync(tmp, path)
+    state.path = path
+    return { path }
+  },
+
+  getPdfBuffer() {
+    const bytes = requireDoc().saveToBuffer('garbage=compact').asUint8Array()
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+  },
+
+  close() {
+    state.doc?.destroy?.()
+    state.doc = null
+    state.path = null
+    invalidate()
+    return null
+  }
+}
+
+interface RpcRequest {
+  id: number
+  op: string
+  args: Record<string, unknown>
+}
+
+parentPort?.on('message', (msg: RpcRequest) => {
+  try {
+    const fn = ops[msg.op]
+    if (!fn) throw new Error(`알 수 없는 연산: ${msg.op}`)
+    const result = fn(msg.args ?? {})
+    const transfer: ArrayBuffer[] = []
+    if (result && typeof result === 'object') {
+      const png = (result as { png?: ArrayBuffer }).png
+      if (png instanceof ArrayBuffer) transfer.push(png)
+      if (result instanceof ArrayBuffer) transfer.push(result)
+    }
+    parentPort?.postMessage({ id: msg.id, ok: true, result }, transfer)
+  } catch (err) {
+    parentPort?.postMessage({
+      id: msg.id,
+      ok: false,
+      error: err instanceof Error ? err.message : String(err)
+    })
+  }
+})

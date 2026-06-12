@@ -1,0 +1,31 @@
+appId: com.icenovel.icepdf
+productName: ICEPDF
+# worker_threads가 asar 내부 스크립트를 로드하지 못하므로 asar 비활성화
+asar: false
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: build/icon.ico
+    to: build/icon.ico
+# kordoc의 OCR 전용 선택 의존성은 afterPack에서 제거 (files 제외 패턴은 node_modules 수집에 미적용)
+afterPack: build/after-pack.cjs
+win:
+  target:
+    - nsis
+  icon: build/icon.ico
+fileAssociations:
+  - ext: pdf
+    name: PDF 문서
+    description: PDF 문서
+    icon: build/icon.ico
+    role: Editor
+nsis:
+  oneClick: true
+  perMachine: false
+  artifactName: ICEPDF-Setup-${version}.exe
+  shortcutName: ICEPDF
+  uninstallDisplayName: ICEPDF

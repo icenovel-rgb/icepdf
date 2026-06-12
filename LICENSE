@@ -1,0 +1,35 @@
+ICEPDF — Acrobat-style PDF viewer/editor with Korean (HWPX) & image export
+Copyright (C) 2026 icenovel <icenovel@proton.me>
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+----------------------------------------------------------------------
+
+This project is licensed under the GNU Affero General Public License v3.0
+(AGPL-3.0) because it links the MuPDF library (mupdf.js, © Artifex Software),
+which is distributed under AGPL-3.0.
+
+The FULL TEXT of the GNU Affero General Public License v3.0 must accompany
+this software. Obtain the canonical text from:
+
+    https://www.gnu.org/licenses/agpl-3.0.txt
+
+To embed it into this repository, run (from the project root):
+
+    curl -L https://www.gnu.org/licenses/agpl-3.0.txt -o COPYING
+
+Third-party components and their licenses are listed in THIRD_PARTY-NOTICES.md.
+
+For proprietary/commercial use without AGPL obligations, a commercial MuPDF
+license from Artifex (https://artifex.com/licensing/) is required.

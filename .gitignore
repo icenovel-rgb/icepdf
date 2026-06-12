@@ -1,0 +1,12 @@
+node_modules/
+out/
+dist/
+release/
+*.log
+.DS_Store
+spike/output/
+
+# 제3자 테스트 문서(저작권) — 공개 제외
+samples/magazine.pdf
+samples/shopify.pdf
+qr-code.png
