@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore, type SelectedImage } from '../state/store'
 import { usePageImage, pageRenderScale } from '../lib/images'
 import { eng } from '../lib/engine'
@@ -16,7 +16,7 @@ import {
 } from '../lib/actions'
 import { CURSOR_ERASER, CURSOR_ROTATE } from '../lib/cursors'
 import Icon from './Icon'
-import type { Quad, Rect } from '../../../shared/types'
+import type { LinkInfo, Quad, Rect } from '../../../shared/types'
 
 interface Props {
   page: number
@@ -69,10 +69,27 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
   const rafPending = useRef(false)
   const lastPoint = useRef<[number, number] | null>(null)
   const [placeRect, setPlaceRect] = useState<Rect | null>(null)
+  const [links, setLinks] = useState<LinkInfo[]>([])
 
   const pageInfo = info?.pages[page]
   const renderScale = pageRenderScale(zoom, pageInfo?.width ?? 612, pageInfo?.height ?? 792)
   const url = usePageImage(activeDocId, page, renderScale, epoch, visible && !!pageInfo)
+
+  // 페이지 하이퍼링크 로드 — 편집(epoch)으로 페이지 구성이 바뀌면 다시 가져온다.
+  useEffect(() => {
+    if (!visible || !pageInfo) {
+      setLinks([])
+      return
+    }
+    let alive = true
+    eng('getLinks', { page })
+      .then((ls) => alive && setLinks(ls))
+      .catch(() => alive && setLinks([]))
+    return () => {
+      alive = false
+    }
+  }, [activeDocId, page, epoch, visible, !!pageInfo])
+
   if (!pageInfo) return <div />
 
   const cssW = pageInfo.width * zoom
@@ -280,6 +297,37 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
         <PageCanvas url={url} cssW={cssW} cssH={cssH} />
       ) : (
         <div className="page-loading">{page + 1}</div>
+      )}
+
+      {links.length > 0 && (
+        <div className="link-layer">
+          {links.map((l, i) => {
+            // 외부 URL이거나 해석된 내부 페이지가 있을 때만 클릭 가능
+            if (!l.external && l.page < 0) return null
+            // 읽기(select) 도구일 때만 클릭 — 형광펜/지우개/이미지 도구는 통과
+            const active = tool === 'select' && !panMode
+            return (
+              <div
+                key={i}
+                className="link-annot"
+                title={l.external ? l.uri : `${l.page + 1}쪽으로 이동`}
+                style={{
+                  left: l.rect[0] * zoom,
+                  top: l.rect[1] * zoom,
+                  width: (l.rect[2] - l.rect[0]) * zoom,
+                  height: (l.rect[3] - l.rect[1]) * zoom,
+                  pointerEvents: active ? 'auto' : 'none'
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (l.external) void window.icepdf.openExternal(l.uri)
+                  else useStore.getState().gotoPage(l.page)
+                }}
+              />
+            )
+          })}
+        </div>
       )}
 
       {ocrWords && ocrWords.length > 0 && (

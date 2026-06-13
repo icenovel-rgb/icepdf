@@ -43,6 +43,18 @@ export interface AnnotSummary {
   rect: Rect
 }
 
+/** PDF 페이지 안의 하이퍼링크 한 개 */
+export interface LinkInfo {
+  /** 클릭 영역 [x0, y0, x1, y1] (fitz pt) */
+  rect: Rect
+  /** 원본 URI (외부 링크면 웹/메일 주소, 내부면 mupdf 내부 링크 문자열) */
+  uri: string
+  /** true=외부(웹/메일/파일) → 기본 브라우저로, false=문서 내 페이지 점프 */
+  external: boolean
+  /** 내부 링크의 목표 페이지(0-base). 외부이거나 해석 불가면 -1 */
+  page: number
+}
+
 export interface ConvertResult {
   ok: boolean
   /** 저장된 파일 경로 */
@@ -71,6 +83,7 @@ export interface EngineOps {
   updateStamp: { args: { page: number; index: number; rect: Rect; png: ArrayBuffer }; result: { count: number } }
   setAnnotRect: { args: { page: number; index: number; rect: Rect }; result: { count: number } }
   listAnnots: { args: { page: number }; result: AnnotSummary[] }
+  getLinks: { args: { page: number }; result: LinkInfo[] }
   hitAnnot: { args: { page: number; x: number; y: number; types?: string[] }; result: AnnotSummary | null }
   deleteAnnot: { args: { page: number; index: number }; result: { count: number } }
   insertBlank: { args: { at: number }; result: DocInfo }

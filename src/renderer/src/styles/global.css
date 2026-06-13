@@ -221,6 +221,22 @@ input {
   pointer-events: none;
   mix-blend-mode: multiply;
 }
+/* ── PDF 하이퍼링크 ── */
+.link-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+.link-annot {
+  position: absolute;
+  cursor: pointer;
+  border-radius: 2px;
+}
+.link-annot:hover {
+  background: rgba(59, 130, 246, 0.2);
+  outline: 1px solid rgba(59, 130, 246, 0.6);
+}
 .image-rect {
   position: absolute;
   border: 2px dashed #1f6feb;

@@ -6,7 +6,7 @@ import { parentPort } from 'node:worker_threads'
 import { readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import * as mupdf from 'mupdf'
-import type { BookmarkItem, DocInfo, Quad, Rect } from '../../shared/types'
+import type { BookmarkItem, DocInfo, LinkInfo, Quad, Rect } from '../../shared/types'
 
 interface DocState {
   doc: mupdf.PDFDocument
@@ -209,6 +209,27 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
       type: a.getType(),
       rect: a.getBounds() as unknown as Rect
     }))
+  },
+
+  getLinks(docId, { page }: { page: number }): LinkInfo[] {
+    const doc = requireDoc(docId)
+    const p = doc.loadPage(page)
+    return p.getLinks().map((l) => {
+      const uri = l.getURI()
+      const external = l.isExternal()
+      const [x0, y0, x1, y1] = l.getBounds() as unknown as Rect
+      // 내부 링크만 페이지로 해석 (외부 URL은 resolveLink가 -1)
+      let target = -1
+      if (!external) {
+        try {
+          const r = doc.resolveLink(uri)
+          target = typeof r === 'number' && r >= 0 ? r : -1
+        } catch {
+          target = -1
+        }
+      }
+      return { rect: [x0, y0, x1, y1] as Rect, uri, external, page: target }
+    })
   },
 
   hitAnnot(docId, { page, x, y, types }: { page: number; x: number; y: number; types?: string[] }) {

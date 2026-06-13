@@ -1,6 +1,6 @@
 {
   "name": "icepdf",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "아크로벳 리더 스타일 PDF 뷰어/에디터 — 한글(HWPX)/Markdown 변환 내장",
   "main": "./out/main/index.js",
   "type": "module",
