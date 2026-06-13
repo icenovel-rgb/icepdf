@@ -1,6 +1,7 @@
 /** 문서 단위 액션 — 엔진 호출 + 스토어 갱신을 묶는다 */
 import { useStore, type SelectedImage } from '../state/store'
-import { clearImageCache } from './images'
+import { clearDocImages } from './images'
+import { eng } from './engine'
 import { transformPng, imageNaturalSize, rotatedBBox } from './imgxform'
 import {
   clearSessionImages,
@@ -18,39 +19,50 @@ function touch(): void {
   s.set({ dirty: true, epoch: s.epoch + 1 })
 }
 
+/** PDF를 새 탭으로 연다 (윈도우 탐색기 탭처럼 — 기존 탭은 유지). */
 export async function openFile(path?: string): Promise<void> {
-  const s = store()
-  if (s.dirty) {
-    const ok = await api().confirm('저장하지 않은 변경이 있습니다', '저장하지 않고 다른 파일을 여시겠습니까?')
-    if (!ok) return
-  }
   const target = path ?? (await api().openPdfDialog())
   if (!target) return
+  const s = store()
   s.set({ busy: '문서 여는 중...' })
   try {
-    const info = await api().engine('open', { path: target })
-    clearImageCache()
-    clearSessionImages()
-    store().set({ ocrLayers: {} })
-    s.set({
-      info,
-      dirty: false,
-      currentPage: 0,
-      selection: null,
-      selectedImage: null,
-      pendingImage: null,
-      tool: 'select',
-      epoch: s.epoch + 1,
-      scrollTarget: 0,
-      navSeq: s.navSeq + 1,
-      viewMode: 'scroll',
-      ocrLayers: {}
-    })
+    const { docId, info } = await api().openDoc(target)
+    s.openTab(docId, info)
   } catch (err) {
     s.showToast(`열기 실패: ${err instanceof Error ? err.message : err}`)
   } finally {
     store().set({ busy: null })
   }
+}
+
+/**
+ * 새로고침 — 활성 문서의 렌더 캐시를 비우고 epoch를 올려 보이는 페이지를 강제 재렌더.
+ * 렌더 요청이 실패/적체돼 페이지가 공백으로 멈췄을 때 복구용 (F5 / Ctrl+R / 툴바).
+ */
+export function refreshPages(): void {
+  const s = store()
+  if (!s.info) return
+  clearDocImages(s.activeDocId)
+  s.set({ epoch: s.epoch + 1 })
+  s.showToast('페이지를 새로 불러왔습니다')
+}
+
+/** 탭 닫기 — 활성 탭에 저장 안 한 변경이 있으면 확인 후 엔진 문서 해제. */
+export async function closeTabById(tabId: number): Promise<void> {
+  const s = store()
+  const tab = s.tabs.find((t) => t.id === tabId)
+  if (!tab) return
+  const isActive = s.activeTabId === tabId
+  const isDirty = isActive ? s.dirty : tab.snapshot.dirty
+  if (isDirty) {
+    const ok = await api().confirm(
+      '저장하지 않은 변경이 있습니다',
+      '저장하지 않고 이 탭을 닫으시겠습니까?'
+    )
+    if (!ok) return
+  }
+  void api().closeDoc(tab.docId)
+  store().removeTab(tabId)
 }
 
 export async function saveFile(forceAsk = false): Promise<void> {
@@ -68,8 +80,8 @@ export async function saveFile(forceAsk = false): Promise<void> {
   }
   s.set({ busy: '저장 중...' })
   try {
-    await api().engine('save', { path })
-    const info = await api().engine('docInfo', {})
+    await eng('save', { path })
+    const info = await eng('docInfo', {})
     s.set({ info, dirty: false })
     s.showToast('저장되었습니다')
   } catch (err) {
@@ -101,7 +113,7 @@ export async function exportDoc(mode: 'markdown' | 'hwpx'): Promise<void> {
   if (!outPath) return
   s.set({ busy: mode === 'markdown' ? 'Markdown 변환 중...' : 'HWPX 변환 중 (텍스트+이미지, 시간이 걸릴 수 있음)...' })
   try {
-    const result = await api().convert(mode, outPath)
+    const result = await api().convert(store().activeDocId, mode, outPath)
     const extra = result.imageCount ? ` (이미지 ${result.imageCount}개)` : ''
     const warn = result.warnings?.length ? ` · 경고 ${result.warnings.length}건` : ''
     s.showToast(`내보내기 완료: ${result.outPath}${extra}${warn}`)
@@ -121,7 +133,7 @@ export async function exportImagesToFolder(): Promise<void> {
   if (!folder) return
   s.set({ busy: '페이지를 이미지로 내보내는 중...' })
   try {
-    const result = await api().convert('images', folder)
+    const result = await api().convert(store().activeDocId, 'images', folder)
     s.showToast(`이미지 ${result.imageCount}장을 저장했습니다: ${result.outPath}`)
   } catch (err) {
     s.showToast(`이미지 내보내기 실패: ${err instanceof Error ? err.message : err}`)
@@ -137,9 +149,9 @@ export async function deleteSelectedOrPage(): Promise<void> {
   const sel = s.selectedImage
   if (sel) {
     try {
-      await api().engine('deleteAnnot', { page: sel.page, index: sel.index })
+      await eng('deleteAnnot', { page: sel.page, index: sel.index })
       s.set({ selectedImage: null })
-      s.applyEdit(await api().engine('docInfo', {}))
+      s.applyEdit(await eng('docInfo', {}))
       s.showToast('삽입한 개체를 삭제했습니다')
     } catch (err) {
       s.showToast(`삭제 실패: ${err instanceof Error ? err.message : err}`)
@@ -155,8 +167,8 @@ export async function deletePageAt(page: number): Promise<void> {
   const ok = await api().confirm(`${page + 1}쪽을 삭제할까요?`, '이 작업은 저장 전까지 되돌릴 수 없습니다.')
   if (!ok) return
   try {
-    s.applyEdit(await api().engine('deletePage', { page }))
-    clearSessionImages()
+    s.applyEdit(await eng('deletePage', { page }))
+    clearSessionImages(store().activeDocId)
     store().set({ ocrLayers: {} })
   } catch (err) {
     s.showToast(`삭제 실패: ${err instanceof Error ? err.message : err}`)
@@ -167,8 +179,8 @@ export async function insertBlankAt(at: number): Promise<void> {
   const s = store()
   if (!s.info) return
   try {
-    s.applyEdit(await api().engine('insertBlank', { at }))
-    clearSessionImages()
+    s.applyEdit(await eng('insertBlank', { at }))
+    clearSessionImages(store().activeDocId)
     store().set({ ocrLayers: {} })
   } catch (err) {
     s.showToast(`삽입 실패: ${err instanceof Error ? err.message : err}`)
@@ -182,8 +194,8 @@ export async function insertFromPdfAt(at: number): Promise<void> {
   if (!path) return
   s.set({ busy: 'PDF 페이지 삽입 중...' })
   try {
-    s.applyEdit(await api().engine('insertFromPdf', { at, path }))
-    clearSessionImages()
+    s.applyEdit(await eng('insertFromPdf', { at, path }))
+    clearSessionImages(store().activeDocId)
     store().set({ ocrLayers: {} })
     s.showToast('페이지를 삽입했습니다')
   } catch (err) {
@@ -202,13 +214,13 @@ export async function highlightSelection(): Promise<void> {
   const s = store()
   if (!s.selection || !s.selection.quads.length) return
   try {
-    await api().engine('addHighlight', {
+    await eng('addHighlight', {
       page: s.selection.page,
       quads: s.selection.quads,
       color: hexToRgb(s.highlightColor),
       opacity: 0.45
     })
-    s.applyEdit(await api().engine('docInfo', {}))
+    s.applyEdit(await eng('docInfo', {}))
   } catch (err) {
     s.showToast(`형광펜 실패: ${err instanceof Error ? err.message : err}`)
   }
@@ -219,10 +231,10 @@ export async function eraseAt(page: number, x: number, y: number): Promise<boole
   const s = store()
   if (!s.info) return false
   try {
-    const hit = await api().engine('hitAnnot', { page, x, y, types: ['Square', 'Highlight', 'Stamp'] })
+    const hit = await eng('hitAnnot', { page, x, y, types: ['Square', 'Highlight', 'Stamp'] })
     if (!hit) return false
-    await api().engine('deleteAnnot', { page, index: hit.index })
-    s.applyEdit(await api().engine('docInfo', {}))
+    await eng('deleteAnnot', { page, index: hit.index })
+    s.applyEdit(await eng('docInfo', {}))
     return true
   } catch (err) {
     s.showToast(`지우기 실패: ${err instanceof Error ? err.message : err}`)
@@ -266,7 +278,7 @@ export async function placeImage(page: number, rect: Rect): Promise<void> {
   const pending = s.pendingImage
   if (!pending) return
   try {
-    const { index } = await api().engine('addImage', { page, rect, png: pending.data.slice(0) })
+    const { index } = await eng('addImage', { page, rect, png: pending.data.slice(0) })
     const sel: SelectedImage = {
       page,
       index,
@@ -282,7 +294,7 @@ export async function placeImage(page: number, rect: Rect): Promise<void> {
       flipV: false,
       rect
     }
-    registerSessionImage(sel)
+    registerSessionImage(store().activeDocId, sel)
     s.set({ tool: 'select', pendingImage: null, selectedImage: sel, dirty: true, epoch: s.epoch + 1 })
   } catch (err) {
     s.showToast(`이미지 삽입 실패: ${err instanceof Error ? err.message : err}`)
@@ -304,15 +316,15 @@ export async function commitImageTransform(kind: 'move' | 'resize' | 'rotate' | 
   const s = store()
   const sel = s.selectedImage
   if (!sel) return
-  registerSessionImage(sel)
+  registerSessionImage(store().activeDocId, sel)
   const rerender =
     kind === 'rotate' || kind === 'flip' || (kind === 'resize' && imageNeedsRerender(sel))
   try {
     if (rerender && sel.origData.byteLength > 0) {
       const png = await transformPng(sel.origData, sel.rotation, sel.flipH, sel.flipV, sel.w0, sel.h0)
-      await api().engine('updateStamp', { page: sel.page, index: sel.index, rect: sel.rect, png })
+      await eng('updateStamp', { page: sel.page, index: sel.index, rect: sel.rect, png })
     } else {
-      await api().engine('setAnnotRect', { page: sel.page, index: sel.index, rect: sel.rect })
+      await eng('setAnnotRect', { page: sel.page, index: sel.index, rect: sel.rect })
     }
     touch()
   } catch (err) {
@@ -344,9 +356,9 @@ export async function selectImageAt(page: number, x: number, y: number): Promise
   const s = store()
   if (!s.info) return false
   try {
-    const hit = await api().engine('hitAnnot', { page, x, y, types: ['Stamp'] })
+    const hit = await eng('hitAnnot', { page, x, y, types: ['Stamp'] })
     if (!hit) return false
-    const saved = getSessionImage(page, hit.index)
+    const saved = getSessionImage(store().activeDocId, page, hit.index)
     const cx = (hit.rect[0] + hit.rect[2]) / 2
     const cy = (hit.rect[1] + hit.rect[3]) / 2
     const sel: SelectedImage = saved
@@ -382,7 +394,7 @@ export async function setOutline(items: BookmarkItem[]): Promise<void> {
   const s = store()
   if (!s.info) return
   try {
-    const info = await api().engine('setOutline', { items })
+    const info = await eng('setOutline', { items })
     s.set({ info, dirty: true })
   } catch (err) {
     s.showToast(`책갈피 저장 실패: ${err instanceof Error ? err.message : err}`)
@@ -414,7 +426,7 @@ export async function ocrPages(pages: number[]): Promise<void> {
   s.set({ busy: `OCR 인식 중 0/${pages.length} (첫 실행은 언어데이터 다운로드로 시간이 걸립니다)...` })
   try {
     for (const p of pages) {
-      const { words } = await api().ocrPage(p)
+      const { words } = await api().ocrPage(store().activeDocId, p)
       layers[p] = words
       totalWords += words.length
       done++

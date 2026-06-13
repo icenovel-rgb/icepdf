@@ -48,7 +48,8 @@ export interface SelectedImage {
   rect: Rect
 }
 
-interface AppState {
+/** 문서(탭)마다 독립적으로 보존되는 상태 슬라이스 */
+export interface DocSlice {
   info: DocInfo | null
   dirty: boolean
   currentPage: number
@@ -56,38 +57,93 @@ interface AppState {
   fitWidthTick: number
   fitPageTick: number
   viewMode: ViewMode
-  /** 한쪽(1) / 두쪽(2) 보기 */
   spread: 1 | 2
-  /** 두쪽 보기에서 첫 페이지를 표지로 단독 배치 */
   cover: boolean
-  sidebar: SidebarTab | null
-  sidebarWidth: number
   tool: Tool
-  highlightColor: string
   pendingImage: PendingImage | null
   selection: Selection | null
   selectedImage: SelectedImage | null
+  ocrLayers: Record<number, OcrWord[]>
+  epoch: number
+  scrollTarget: number | null
+  navSeq: number
+}
+
+/** 윈도우 탐색기 스타일 탭 — 각자 독립 문서(docId)와 슬라이스 보유 */
+export interface Tab {
+  id: number
+  docId: number
+  /** 비활성 시 보존되는 상태 (활성 탭은 라이브 스토어가 진실) */
+  snapshot: DocSlice
+}
+
+const SLICE_KEYS = [
+  'info', 'dirty', 'currentPage', 'zoom', 'fitWidthTick', 'fitPageTick', 'viewMode',
+  'spread', 'cover', 'tool', 'pendingImage', 'selection', 'selectedImage', 'ocrLayers',
+  'epoch', 'scrollTarget', 'navSeq'
+] as const
+
+const EMPTY_SLICE: DocSlice = {
+  info: null,
+  dirty: false,
+  currentPage: 0,
+  zoom: 1,
+  fitWidthTick: 0,
+  fitPageTick: 0,
+  viewMode: 'scroll',
+  spread: 1,
+  cover: true,
+  tool: 'select',
+  pendingImage: null,
+  selection: null,
+  selectedImage: null,
+  ocrLayers: {},
+  epoch: 0,
+  scrollTarget: null,
+  navSeq: 0
+}
+
+let nextTabId = 1
+
+interface AppState extends DocSlice {
+  // ── 탭(윈도우 단위, 문서 무관) ──
+  tabs: Tab[]
+  activeTabId: number | null
+  /** 활성 탭의 엔진 문서 id — 모든 engine 호출이 이걸로 라우팅 */
+  activeDocId: number
+
+  // ── 윈도우 전역 상태 (탭 전환에도 유지) ──
+  sidebar: SidebarTab | null
+  sidebarWidth: number
+  highlightColor: string
   /** 스페이스바 손도구 패닝 모드 (#D) */
   panMode: boolean
   /** 크롬(툴바/사이드바/상태바) 숨김 — Tab */
   chromeHidden: boolean
   /** 창 전체화면 — Ctrl+L (크롬 숨김 동반) */
   fullscreen: boolean
-  /** 페이지별 OCR 텍스트 레이어 (선택 가능 단어, fitz 포인트 좌표) */
-  ocrLayers: Record<number, OcrWord[]>
   /** 후원 모달 표시 */
   showSupport: boolean
-  epoch: number
   busy: string | null
   toast: string | null
-  /** 스크롤 목표 페이지 + 매 요청마다 증가하는 시퀀스 (동일 페이지도 재발화) */
-  scrollTarget: number | null
-  navSeq: number
 
   set: (partial: Partial<AppState>) => void
   applyEdit: (info: DocInfo) => void
   gotoPage: (page: number) => void
   showToast: (message: string) => void
+  /** 새 문서를 탭으로 열고 활성화 */
+  openTab: (docId: number, info: DocInfo) => void
+  /** 탭 전환 (현재 슬라이스 보존 후 대상 복원) */
+  switchTab: (tabId: number) => void
+  /** 탭 제거 (엔진 문서 해제는 호출부 책임) — 활성 탭이면 이웃으로 전환 */
+  removeTab: (tabId: number) => void
+}
+
+/** 현재 라이브 스토어에서 문서 슬라이스만 추출 */
+function sliceOf(s: AppState): DocSlice {
+  const out: Record<string, unknown> = {}
+  for (const k of SLICE_KEYS) out[k] = s[k]
+  return out as unknown as DocSlice
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null
@@ -102,6 +158,9 @@ export const useStore = create<AppState>((set, get) => ({
   viewMode: 'scroll',
   spread: 1,
   cover: true,
+  tabs: [],
+  activeTabId: null,
+  activeDocId: 0,
   sidebar: 'thumbnails',
   sidebarWidth: 210,
   tool: 'select',
@@ -143,5 +202,67 @@ export const useStore = create<AppState>((set, get) => ({
     if (toastTimer) clearTimeout(toastTimer)
     set({ toast: message })
     toastTimer = setTimeout(() => set({ toast: null }), 4000)
+  },
+
+  openTab: (docId, info) => {
+    const s = get()
+    const saved =
+      s.activeTabId != null
+        ? s.tabs.map((t) => (t.id === s.activeTabId ? { ...t, snapshot: sliceOf(s) } : t))
+        : s.tabs
+    const id = nextTabId++
+    const slice: DocSlice = { ...EMPTY_SLICE, info, scrollTarget: 0 }
+    set({
+      tabs: [...saved, { id, docId, snapshot: slice }],
+      activeTabId: id,
+      activeDocId: docId,
+      ...slice
+    })
+  },
+
+  switchTab: (tabId) => {
+    const s = get()
+    if (tabId === s.activeTabId) return
+    const target = s.tabs.find((t) => t.id === tabId)
+    if (!target) return
+    const saved =
+      s.activeTabId != null
+        ? s.tabs.map((t) => (t.id === s.activeTabId ? { ...t, snapshot: sliceOf(s) } : t))
+        : s.tabs
+    set({
+      tabs: saved,
+      activeTabId: tabId,
+      activeDocId: target.docId,
+      ...target.snapshot,
+      scrollTarget: target.snapshot.currentPage,
+      navSeq: target.snapshot.navSeq + 1
+    })
+  },
+
+  removeTab: (tabId) => {
+    const s = get()
+    const idx = s.tabs.findIndex((t) => t.id === tabId)
+    if (idx < 0) return
+    const remaining = s.tabs.filter((t) => t.id !== tabId)
+    // 비활성 탭 닫기 — 활성 상태 그대로
+    if (s.activeTabId !== tabId) {
+      set({ tabs: remaining })
+      return
+    }
+    // 마지막 탭 닫기 → 시작 화면
+    if (remaining.length === 0) {
+      set({ tabs: [], activeTabId: null, activeDocId: 0, ...EMPTY_SLICE })
+      return
+    }
+    // 활성 탭 닫기 → 이웃 탭 활성화
+    const next = remaining[Math.min(idx, remaining.length - 1)]
+    set({
+      tabs: remaining,
+      activeTabId: next.id,
+      activeDocId: next.docId,
+      ...next.snapshot,
+      scrollTarget: next.snapshot.currentPage,
+      navSeq: next.snapshot.navSeq + 1
+    })
   }
 }))

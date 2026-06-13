@@ -87,6 +87,10 @@ export type EngineOpName = keyof EngineOps
 /** 메인 → 렌더러 메뉴/단축키 액션 */
 export type MenuAction =
   | 'open'
+  | 'newTab'
+  | 'closeTab'
+  | 'nextTab'
+  | 'prevTab'
   | 'save'
   | 'saveAs'
   | 'exportMarkdown'

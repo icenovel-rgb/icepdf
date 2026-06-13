@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { Worker } from 'node:worker_threads'
 import { join } from 'node:path'
-import { engineCall } from './engine/proxy'
+import { closeDoc, engineCall, openDoc } from './engine/proxy'
 import type { ConvertResult, EngineOpName } from '../shared/types'
 
 // ── kordoc 변환 워커 RPC ──
@@ -95,8 +95,16 @@ export function registerIpc(): void {
     return f
   })
 
-  ipcMain.handle('engine:call', async (_e, op: EngineOpName, args: Record<string, unknown>) => {
-    return engineCall(op, args as never)
+  ipcMain.handle('engine:call', async (_e, docId: number, op: EngineOpName, args: Record<string, unknown>) => {
+    return engineCall(docId, op, args as never)
+  })
+
+  ipcMain.handle('doc:open', async (_e, path: string) => {
+    return openDoc(path)
+  })
+
+  ipcMain.handle('doc:close', async (_e, docId: number) => {
+    return closeDoc(docId)
   })
 
   ipcMain.handle('dialog:openPdf', async (e) => {
@@ -148,13 +156,13 @@ export function registerIpc(): void {
     return r.response === 0
   })
 
-  ipcMain.handle('convert:run', async (_e, mode: 'markdown' | 'hwpx' | 'images', outPath: string) => {
-    const pdf = await engineCall('getPdfBuffer', {})
+  ipcMain.handle('convert:run', async (_e, docId: number, mode: 'markdown' | 'hwpx' | 'images', outPath: string) => {
+    const pdf = await engineCall(docId, 'getPdfBuffer', {})
     return runConvert(mode, pdf, outPath)
   })
 
-  ipcMain.handle('ocr:page', async (_e, page: number, lang: string) => {
-    const r = await engineCall('render', { page, scale: OCR_SCALE })
+  ipcMain.handle('ocr:page', async (_e, docId: number, page: number, lang: string) => {
+    const r = await engineCall(docId, 'render', { page, scale: OCR_SCALE })
     const result = await runOcr(r.png, lang)
     // 단어 bbox를 PDF 포인트 좌표로 변환
     const words = result.words.map((w) => ({

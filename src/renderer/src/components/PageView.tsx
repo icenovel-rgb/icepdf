@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
 import { useStore, type SelectedImage } from '../state/store'
-import { usePageImage, quantizeScale } from '../lib/images'
+import { usePageImage, pageRenderScale } from '../lib/images'
+import { eng } from '../lib/engine'
+import PageCanvas from './PageCanvas'
 import {
   commitImageTransform,
   deselectImage,
@@ -42,6 +44,7 @@ const ROT_HANDLE_OFFSET = 26 // px
 export default function PageView({ page, visible, scale }: Props): React.JSX.Element {
   const info = useStore((s) => s.info)
   const storeZoom = useStore((s) => s.zoom)
+  const activeDocId = useStore((s) => s.activeDocId)
   const zoom = scale ?? storeZoom
   const epoch = useStore((s) => s.epoch)
   const tool = useStore((s) => s.tool)
@@ -68,7 +71,8 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
   const [placeRect, setPlaceRect] = useState<Rect | null>(null)
 
   const pageInfo = info?.pages[page]
-  const url = usePageImage(page, quantizeScale(zoom), epoch, visible && !!pageInfo)
+  const renderScale = pageRenderScale(zoom, pageInfo?.width ?? 612, pageInfo?.height ?? 792)
+  const url = usePageImage(activeDocId, page, renderScale, epoch, visible && !!pageInfo)
   if (!pageInfo) return <div />
 
   const cssW = pageInfo.width * zoom
@@ -84,8 +88,7 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
 
   const updateSelection = (a: [number, number], b: [number, number]): void => {
     const seq = ++selSeq.current
-    window.icepdf
-      .engine('selection', { page, ax: a[0], ay: a[1], bx: b[0], by: b[1] })
+    eng('selection', { page, ax: a[0], ay: a[1], bx: b[0], by: b[1] })
       .then((r) => {
         if (seq === selSeq.current) set({ selection: { page, quads: r.quads, text: r.text } })
       })
@@ -274,7 +277,7 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
       onPointerUp={onPointerUp}
     >
       {url ? (
-        <img src={url} width={cssW} height={cssH} draggable={false} alt={`${page + 1}쪽`} />
+        <PageCanvas url={url} cssW={cssW} cssH={cssH} />
       ) : (
         <div className="page-loading">{page + 1}</div>
       )}

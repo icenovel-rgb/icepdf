@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from './state/store'
 import Toolbar from './components/Toolbar'
+import TabBar from './components/TabBar'
 import Viewer from './components/Viewer'
 import GridView from './components/GridView'
 import SlideView from './components/SlideView'
@@ -10,6 +11,7 @@ import StatusBar from './components/StatusBar'
 import SupportModal from './components/SupportModal'
 import {
   addBookmarkAtCurrentPage,
+  closeTabById,
   copySelection,
   deleteSelectedOrPage,
   deselectImage,
@@ -17,6 +19,7 @@ import {
   exportImagesToFolder,
   ocrCurrentPage,
   openFile,
+  refreshPages,
   saveFile
 } from './lib/actions'
 import * as actions from './lib/actions'
@@ -28,11 +31,30 @@ declare global {
   }
 }
 
+/** 활성 탭 기준 이웃 탭으로 순환 전환 */
+function cycleTab(dir: 1 | -1): void {
+  const s = useStore.getState()
+  if (s.tabs.length < 2 || s.activeTabId == null) return
+  const i = s.tabs.findIndex((t) => t.id === s.activeTabId)
+  const next = s.tabs[(i + dir + s.tabs.length) % s.tabs.length]
+  s.switchTab(next.id)
+}
+
 function handleMenuAction(action: MenuAction): void {
   const s = useStore.getState()
   switch (action) {
     case 'open':
+    case 'newTab':
       void openFile()
+      break
+    case 'closeTab':
+      if (s.activeTabId != null) void closeTabById(s.activeTabId)
+      break
+    case 'nextTab':
+      cycleTab(1)
+      break
+    case 'prevTab':
+      cycleTab(-1)
       break
     case 'save':
       void saveFile()
@@ -184,13 +206,23 @@ export default function App(): React.JSX.Element {
     const onKey = (e: KeyboardEvent): void => {
       const inInput = (e.target as HTMLElement).tagName === 'INPUT'
       const s = useStore.getState()
+      // 새로고침은 입력 포커스 중에도 동작 (멈춘 페이지 복구)
+      if (e.key === 'F5' || (e.ctrlKey && e.key.toLowerCase() === 'r')) {
+        e.preventDefault()
+        refreshPages()
+        return
+      }
       if (inInput) return
       const slide = s.viewMode === 'slide'
-      if (e.ctrlKey && e.key.toLowerCase() === 'c') {
+      if (e.ctrlKey && e.key === 'Tab') {
+        // Ctrl+T / Ctrl+W는 메뉴 가속기가 담당 (중복 발화 방지). 순환만 여기서.
+        e.preventDefault()
+        cycleTab(e.shiftKey ? -1 : 1)
+      } else if (e.ctrlKey && e.key.toLowerCase() === 'c') {
         // OCR 텍스트 레이어 등 네이티브 선택이 있으면 브라우저 기본 복사에 맡긴다
         if ((window.getSelection()?.toString() ?? '').trim()) return
         void copySelection()
-      } else if (e.key === 'Tab' && s.info) {
+      } else if (e.key === 'Tab' && !e.ctrlKey && s.info) {
         e.preventDefault()
         toggleChrome()
       } else if (e.key === 'Delete' && s.info) {
@@ -237,6 +269,7 @@ export default function App(): React.JSX.Element {
       }}
       onDrop={onDrop}
     >
+      {!chromeHidden && <TabBar />}
       {!chromeHidden && <Toolbar />}
       <div className="main">
         {info && sidebar && !chromeHidden && (

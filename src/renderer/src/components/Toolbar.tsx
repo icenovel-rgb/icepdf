@@ -10,6 +10,7 @@ import {
   insertBlankAt,
   insertFromPdfAt,
   openFile,
+  refreshPages,
   saveFile
 } from '../lib/actions'
 
@@ -36,6 +37,7 @@ export default function Toolbar(): React.JSX.Element {
     <div className="toolbar">
       <button className="tb-btn" onClick={() => void openFile()} title="열기 (Ctrl+O)"><Icon name="open" /></button>
       <button className="tb-btn" disabled={!has} onClick={() => void saveFile()} title="저장 (Ctrl+S)"><Icon name="save" /></button>
+      <button className="tb-btn" disabled={!has} onClick={() => refreshPages()} title="새로고침 — 멈춘 페이지 다시 불러오기 (F5)"><Icon name="refresh" /></button>
 
       <span className="tb-sep" />
 

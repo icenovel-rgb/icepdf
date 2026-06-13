@@ -57,7 +57,7 @@ export default function Viewer(): React.JSX.Element {
 
   /** 행별 크기(css px) + 누적 상단 오프셋 */
   const layout = useMemo(() => {
-    if (!info) return { dims: [] as { width: number; height: number }[], offsets: [PAD], total: PAD }
+    if (!info) return { dims: [] as { width: number; height: number }[], offsets: [PAD], total: PAD, width: 0 }
     const dims = rows.map((r) => {
       const widths = r.map((p) => slotSize(r, p).width * zoom)
       const heights = r.map((p) => slotSize(r, p).height * zoom)
@@ -72,7 +72,10 @@ export default function Viewer(): React.JSX.Element {
       offsets.push(y)
       y += d.height + ROW_GAP
     }
-    return { dims, offsets, total: y - ROW_GAP + PAD }
+    // 캔버스 가로 너비 = 가장 넓은 행 + 좌우 여백.
+    // 지정하지 않으면 확대 시 중앙정렬된 페이지의 왼쪽이 스크롤 영역 밖으로 나가 닿지 못한다.
+    const maxRowW = dims.length ? Math.max(...dims.map((d) => d.width)) : 0
+    return { dims, offsets, total: y - ROW_GAP + PAD, width: maxRowW + PAD * 2 }
   }, [info, rows, zoom])
 
   const updateVisible = (): void => {
@@ -202,7 +205,7 @@ export default function Viewer(): React.JSX.Element {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
-      <div className="viewer-canvas" style={{ height: layout.total }}>
+      <div className="viewer-canvas" style={{ height: layout.total, width: layout.width }}>
         {els}
       </div>
     </div>

@@ -34,6 +34,8 @@ function buildMenu(): void {
       label: '파일(&F)',
       submenu: [
         { label: '열기...', accelerator: 'Ctrl+O', click: () => send('open') },
+        { label: '새 탭으로 열기...', accelerator: 'Ctrl+T', click: () => send('newTab') },
+        { label: '탭 닫기', accelerator: 'Ctrl+W', click: () => send('closeTab') },
         { type: 'separator' },
         { label: '저장', accelerator: 'Ctrl+S', click: () => send('save') },
         { label: '다른 이름으로 저장...', accelerator: 'Ctrl+Shift+S', click: () => send('saveAs') },

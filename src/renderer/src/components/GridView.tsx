@@ -15,10 +15,11 @@ function GridTile({
   onMenu: (pos: MenuPos) => void
 }): React.JSX.Element {
   const epoch = useStore((s) => s.epoch)
+  const activeDocId = useStore((s) => s.activeDocId)
   const set = useStore((s) => s.set)
   const gotoPage = useStore((s) => s.gotoPage)
   const current = useStore((s) => s.currentPage === page)
-  const url = usePageImage(page, scale, epoch)
+  const url = usePageImage(activeDocId, page, scale, epoch)
 
   return (
     <div
