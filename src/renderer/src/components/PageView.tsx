@@ -78,6 +78,19 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
   const [textDraft, setTextDraft] = useState<{ x: number; y: number } | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const textCancel = useRef(false)
+  /** 편집기가 실제로 포커스를 받았는지 — 클릭 시 포커스 가로채기로 인한 즉시 blur를 무시 */
+  const textReady = useRef(false)
+
+  // 텍스트 편집기 포커스 — 클릭의 기본 포커스 이동이 끝난 다음 프레임에 줘야
+  // 갓 마운트된 textarea가 곧바로 blur되어 닫히지 않는다.
+  useEffect(() => {
+    if (!textDraft) {
+      textReady.current = false
+      return
+    }
+    const id = requestAnimationFrame(() => textareaRef.current?.focus())
+    return () => cancelAnimationFrame(id)
+  }, [textDraft])
 
   const pageInfo = info?.pages[page]
   const renderScale = pageRenderScale(zoom, pageInfo?.width ?? 612, pageInfo?.height ?? 792)
@@ -143,8 +156,11 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
 
   /** 인라인 텍스트 편집 종료 — 취소가 아니면 입력 내용을 Stamp로 배치 */
   const commitTextDraft = (): void => {
+    // 편집기가 아직 포커스를 받기 전(클릭 포커스 가로채기)의 즉시 blur는 무시 — 편집 유지
+    if (!textReady.current) return
     const d = textDraft
     const value = textareaRef.current?.value ?? ''
+    textReady.current = false
     setTextDraft(null)
     if (d && !textCancel.current && value.trim()) {
       void placeText(page, d.x, d.y, value, { font: textFont, size: textSize, color: textColor })
@@ -407,7 +423,6 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
         <textarea
           ref={textareaRef}
           className="text-draft"
-          autoFocus
           spellCheck={false}
           defaultValue=""
           style={{
@@ -419,6 +434,9 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
             color: textColor
           }}
           onPointerDown={(e) => e.stopPropagation()}
+          onFocus={() => {
+            textReady.current = true
+          }}
           onBlur={commitTextDraft}
           onKeyDown={(e) => {
             e.stopPropagation()

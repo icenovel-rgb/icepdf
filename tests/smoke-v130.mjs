@@ -32,17 +32,19 @@ try {
     }
   })
 
-  // ── 1. 텍스트 추가 툴 ──
+  // ── 1. 텍스트 추가 툴 (실제 UI 클릭 흐름 — 도구 선택→페이지 클릭→입력→커밋) ──
   const before = await win.evaluate(() =>
     window.icepdf.engine(window.__icepdf.state().activeDocId, 'listAnnots', { page: 0 }))
-  await win.evaluate(() =>
-    window.__icepdf.actions.placeText(0, 120, 140, '테스트 한글 Text 123', {
-      font: 'Malgun Gothic',
-      size: 22,
-      color: '#d11a1a'
-    })
-  )
-  await sleep(600)
+  await win.evaluate(() => window.__icepdf.state().set({ tool: 'text' }))
+  await win.locator('.page-view').first().click({ position: { x: 90, y: 90 } })
+  await sleep(300)
+  const draftShown = await win.locator('.text-draft').count()
+  report('텍스트 툴 클릭 시 입력창 표시', draftShown === 1)
+  if (draftShown === 1) {
+    await win.locator('.text-draft').fill('테스트 한글 Text 123')
+    await win.locator('.page-view').first().click({ position: { x: 330, y: 330 } }) // blur → commit
+    await sleep(600)
+  }
   const after = await win.evaluate(() =>
     window.icepdf.engine(window.__icepdf.state().activeDocId, 'listAnnots', { page: 0 })
   )
