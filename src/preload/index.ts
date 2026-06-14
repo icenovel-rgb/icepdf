@@ -46,6 +46,14 @@ const api = {
   setFullScreen(on: boolean): Promise<void> {
     return ipcRenderer.invoke('window:setFullScreen', on)
   },
+  /** 저장 안 한 변경 여부를 메인에 알림 (창 닫기 확인용) */
+  setUnsaved(value: boolean): Promise<void> {
+    return ipcRenderer.invoke('window:setUnsaved', value)
+  },
+  /** 닫기 다이얼로그에서 저장을 마친 뒤 메인에 닫기 확정 통지 */
+  confirmClose(): Promise<void> {
+    return ipcRenderer.invoke('window:closeConfirmed')
+  },
   openExternal(url: string): Promise<void> {
     return ipcRenderer.invoke('shell:openExternal', url)
   },
@@ -68,6 +76,12 @@ const api = {
     const listener = (_e: unknown, path: string): void => handler(path)
     ipcRenderer.on('file:open', listener)
     return () => ipcRenderer.removeListener('file:open', listener)
+  },
+  /** 메인이 "전부 저장 후 닫기"를 요청 */
+  onSaveAllThenClose(handler: () => void): () => void {
+    const listener = (): void => handler()
+    ipcRenderer.on('app:saveAllThenClose', listener)
+    return () => ipcRenderer.removeListener('app:saveAllThenClose', listener)
   }
 }
 

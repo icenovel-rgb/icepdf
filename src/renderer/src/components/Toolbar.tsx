@@ -16,6 +16,17 @@ import {
 
 const HIGHLIGHT_COLORS = ['#ffe04d', '#7ee081', '#ff8fb1', '#7ec8ff']
 
+/** 한글까지 그릴 수 있는 시스템 폰트 위주 */
+const TEXT_FONTS = [
+  { label: '맑은 고딕', value: 'Malgun Gothic' },
+  { label: '바탕', value: 'Batang' },
+  { label: '굴림', value: 'Gulim' },
+  { label: '돋움', value: 'Dotum' },
+  { label: 'Arial', value: 'Arial' },
+  { label: 'Times New Roman', value: 'Times New Roman' },
+  { label: 'Courier New', value: 'Courier New' }
+]
+
 export default function Toolbar(): React.JSX.Element {
   const info = useStore((s) => s.info)
   const currentPage = useStore((s) => s.currentPage)
@@ -26,6 +37,9 @@ export default function Toolbar(): React.JSX.Element {
   const cover = useStore((s) => s.cover)
   const sidebar = useStore((s) => s.sidebar)
   const highlightColor = useStore((s) => s.highlightColor)
+  const textFont = useStore((s) => s.textFont)
+  const textSize = useStore((s) => s.textSize)
+  const textColor = useStore((s) => s.textColor)
   const set = useStore((s) => s.set)
   const gotoPage = useStore((s) => s.gotoPage)
   const [ocrOpen, setOcrOpen] = useState(false)
@@ -90,7 +104,33 @@ export default function Toolbar(): React.JSX.Element {
           HIGHLIGHT_COLORS.map((c) => (
             <button key={c} className={`swatch ${highlightColor === c ? 'active' : ''}`} style={{ background: c }} onClick={() => set({ highlightColor: c })} title={c} />
           ))}
-        <button className={`tb-btn ${tool === 'eraser' ? 'active' : ''}`} disabled={!has} onClick={() => set({ tool: 'eraser', pendingImage: null, selectedImage: null })} title="지우개 (형광펜/이미지 클릭 삭제)"><Icon name="eraser" /></button>
+        <button className={`tb-btn ${tool === 'eraser' ? 'active' : ''}`} disabled={!has} onClick={() => set({ tool: 'eraser', pendingImage: null, selectedImage: null })} title="지우개 (형광펜/이미지/텍스트 클릭 삭제)"><Icon name="eraser" /></button>
+        <button className={`tb-btn ${tool === 'text' ? 'active' : ''}`} disabled={!has} onClick={() => set({ tool: 'text', pendingImage: null, selectedImage: null })} title="텍스트 추가 (페이지 클릭 후 입력)"><Icon name="text" /></button>
+        {tool === 'text' && (
+          <span className="tb-text-opts" onMouseDown={(e) => e.preventDefault()}>
+            <select className="tb-font" value={textFont} onChange={(e) => set({ textFont: e.target.value })} title="글꼴">
+              {TEXT_FONTS.map((f) => (
+                <option key={f.value} value={f.value}>{f.label}</option>
+              ))}
+            </select>
+            <input
+              className="tb-fontsize"
+              type="number"
+              min={6}
+              max={400}
+              value={textSize}
+              onChange={(e) => set({ textSize: Math.max(6, Math.min(400, Number(e.target.value) || 18)) })}
+              title="글자 크기 (pt)"
+            />
+            <input
+              className="tb-fontcolor"
+              type="color"
+              value={textColor}
+              onChange={(e) => set({ textColor: e.target.value })}
+              title="글자 색상"
+            />
+          </span>
+        )}
         <button className={`tb-btn ${tool === 'image' ? 'active' : ''}`} disabled={!has} onClick={() => void armImageTool()} title="이미지 삽입"><Icon name="image" /></button>
         <span className="tb-pop">
           <button className={`tb-btn ${ocrOpen ? 'active' : ''}`} disabled={!has} onClick={() => setOcrOpen((v) => !v)} title="OCR 글자 인식 (현재/범위/전체)"><Icon name="ocr" /></button>

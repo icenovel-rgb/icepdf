@@ -10,6 +10,7 @@ import {
   flipImage,
   highlightSelection,
   placeImage,
+  placeText,
   rotateImageBy,
   selectImageAt,
   updateSelectedImageLocal
@@ -51,6 +52,9 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
   const selection = useStore((s) => s.selection)
   const pendingImage = useStore((s) => s.pendingImage)
   const highlightColor = useStore((s) => s.highlightColor)
+  const textFont = useStore((s) => s.textFont)
+  const textSize = useStore((s) => s.textSize)
+  const textColor = useStore((s) => s.textColor)
   const selectedImage = useStore((s) => s.selectedImage)
   const ocrWords = useStore((s) => s.ocrLayers[page])
   const panMode = useStore((s) => s.panMode)
@@ -70,6 +74,10 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
   const lastPoint = useRef<[number, number] | null>(null)
   const [placeRect, setPlaceRect] = useState<Rect | null>(null)
   const [links, setLinks] = useState<LinkInfo[]>([])
+  // 텍스트 추가 툴: 페이지 위 인라인 편집기 (page 좌표)
+  const [textDraft, setTextDraft] = useState<{ x: number; y: number } | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const textCancel = useRef(false)
 
   const pageInfo = info?.pages[page]
   const renderScale = pageRenderScale(zoom, pageInfo?.width ?? 612, pageInfo?.height ?? 792)
@@ -133,9 +141,29 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
   const inRect = (pt: [number, number], rect: Rect): boolean =>
     pt[0] >= rect[0] && pt[0] <= rect[2] && pt[1] >= rect[1] && pt[1] <= rect[3]
 
+  /** 인라인 텍스트 편집 종료 — 취소가 아니면 입력 내용을 Stamp로 배치 */
+  const commitTextDraft = (): void => {
+    const d = textDraft
+    const value = textareaRef.current?.value ?? ''
+    setTextDraft(null)
+    if (d && !textCancel.current && value.trim()) {
+      void placeText(page, d.x, d.y, value, { font: textFont, size: textSize, color: textColor })
+    }
+    textCancel.current = false
+  }
+
   const onPointerDown = (e: React.PointerEvent): void => {
     if (e.button !== 0 || useStore.getState().panMode) return
     const pt = toPagePoint(e)
+
+    if (tool === 'text') {
+      // 편집 중이면 이번 클릭은 종료(블러가 커밋) 용도 — 새 편집기는 다음 클릭에서
+      if (textDraft || textareaRef.current) return
+      setTextDraft({ x: pt[0], y: pt[1] })
+      set({ selection: null, selectedImage: null })
+      return
+    }
+
     ref.current!.setPointerCapture(e.pointerId)
 
     if (tool === 'eraser') {
@@ -371,6 +399,36 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
             top: placeRect[1] * zoom,
             width: (placeRect[2] - placeRect[0]) * zoom,
             height: (placeRect[3] - placeRect[1]) * zoom
+          }}
+        />
+      )}
+
+      {textDraft && (
+        <textarea
+          ref={textareaRef}
+          className="text-draft"
+          autoFocus
+          spellCheck={false}
+          defaultValue=""
+          style={{
+            left: textDraft.x * zoom,
+            top: textDraft.y * zoom,
+            fontFamily: `"${textFont}", 'Segoe UI', sans-serif`,
+            fontSize: textSize * zoom,
+            lineHeight: 1.32,
+            color: textColor
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onBlur={commitTextDraft}
+          onKeyDown={(e) => {
+            e.stopPropagation()
+            if (e.key === 'Escape') {
+              textCancel.current = true
+              e.currentTarget.blur()
+            } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+              e.preventDefault()
+              e.currentTarget.blur()
+            }
           }}
         />
       )}

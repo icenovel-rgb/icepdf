@@ -244,6 +244,24 @@ input {
   pointer-events: none;
 }
 
+/* ── 텍스트 추가 인라인 편집기 ── */
+.text-draft {
+  position: absolute;
+  z-index: 30;
+  min-width: 120px;
+  min-height: 1.4em;
+  margin: 0;
+  padding: 1px 2px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px dashed #1f6feb;
+  border-radius: 2px;
+  outline: none;
+  resize: both;
+  overflow: hidden;
+  white-space: pre;
+  box-shadow: 0 0 0 2px rgba(31, 111, 235, 0.25);
+}
+
 /* ── 그리드 보기 ── */
 .grid-view {
   flex: 1;
@@ -651,6 +669,39 @@ input {
 .swatch.active {
   outline: 2px solid #fff;
   outline-offset: 1px;
+}
+
+/* 텍스트 툴 옵션 (글꼴/크기/색상) */
+.tb-text-opts {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tb-font {
+  height: 26px;
+  max-width: 116px;
+  background: #1c1d20;
+  border: 1px solid #4a4c52;
+  color: #e2e4e8;
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.tb-fontsize {
+  width: 46px;
+  height: 26px;
+  text-align: center;
+  background: #1c1d20;
+  border: 1px solid #4a4c52;
+  color: #e2e4e8;
+}
+.tb-fontcolor {
+  width: 28px;
+  height: 26px;
+  padding: 1px;
+  background: #1c1d20;
+  border: 1px solid #4a4c52;
+  border-radius: 4px;
+  cursor: pointer;
 }
 
 .viewer {

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, Menu, dialog, ipcMain, nativeImage, shell } from 'electron'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { registerIpc, setInitialFile } from './ipc'
@@ -6,6 +6,10 @@ import { shutdownEngine } from './engine/proxy'
 import type { MenuAction } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
+/** 렌더러가 보고한 저장 안 한 변경 여부 (창 닫기 확인용) */
+let hasUnsaved = false
+/** 사용자가 저장/저장 안 함을 택해 닫기를 확정한 상태 */
+let allowClose = false
 
 function send(action: MenuAction): void {
   mainWindow?.webContents.send('menu:action', action)
@@ -96,6 +100,45 @@ function buildMenu(): void {
   Menu.setApplicationMenu(menu)
 }
 
+/** 창 닫기 확인용 IPC — 렌더러의 dirty 상태 동기화 + 저장 후 닫기 확정 */
+function registerWindowIpc(): void {
+  ipcMain.handle('window:setUnsaved', (_e, value: boolean) => {
+    hasUnsaved = !!value
+  })
+  ipcMain.handle('window:closeConfirmed', () => {
+    allowClose = true
+    mainWindow?.close()
+  })
+}
+
+/** 저장 안 한 변경이 있으면 닫기 전에 저장 여부를 묻는다 (이미지/텍스트 추가 후 무경고 종료 방지) */
+function onWindowClose(e: Electron.Event): void {
+  if (allowClose || !hasUnsaved || !mainWindow) return
+  e.preventDefault()
+  const win = mainWindow
+  void dialog
+    .showMessageBox(win, {
+      type: 'warning',
+      message: '저장하지 않은 변경이 있습니다',
+      detail: '창을 닫기 전에 변경 사항을 저장하시겠습니까?',
+      buttons: ['저장', '저장 안 함', '취소'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true
+    })
+    .then((r) => {
+      if (r.response === 2) return // 취소 — 닫기 중단
+      if (r.response === 1) {
+        // 저장 안 함 — 그대로 닫기
+        allowClose = true
+        win.close()
+        return
+      }
+      // 저장 — 렌더러가 전부 저장한 뒤 window:closeConfirmed 로 다시 닫는다
+      win.webContents.send('app:saveAllThenClose')
+    })
+}
+
 function appIcon(): Electron.NativeImage | undefined {
   // 개발 시에는 build/icon.ico, 패키징 시에는 리소스의 아이콘 사용
   const candidates = [
@@ -126,6 +169,7 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
+  mainWindow.on('close', onWindowClose)
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -164,6 +208,7 @@ if (!gotLock) {
   app.whenReady().then(() => {
     setInitialFile(pdfPathFromArgv(process.argv))
     registerIpc()
+    registerWindowIpc()
     buildMenu()
     createWindow()
     app.on('activate', () => {

@@ -20,6 +20,7 @@ import {
   ocrCurrentPage,
   openFile,
   refreshPages,
+  saveAllAndClose,
   saveFile
 } from './lib/actions'
 import * as actions from './lib/actions'
@@ -161,6 +162,17 @@ export default function App(): React.JSX.Element {
     void window.icepdf.setTitle(title)
   }, [info, dirty])
 
+  // 저장 안 한 변경 여부를 메인에 동기화 → 창 닫기 시 확인 다이얼로그 판단용
+  const hasUnsaved = useStore(
+    (s) => s.dirty || s.tabs.some((t) => t.id !== s.activeTabId && t.snapshot.dirty)
+  )
+  useEffect(() => {
+    void window.icepdf.setUnsaved(hasUnsaved)
+  }, [hasUnsaved])
+
+  // 창 닫기 다이얼로그에서 "저장" 선택 → 전부 저장 후 닫기
+  useEffect(() => window.icepdf.onSaveAllThenClose(() => void saveAllAndClose()), [])
+
   // 사이드바 리사이즈 (#4)
   useEffect(() => {
     const onMove = (e: PointerEvent): void => {
@@ -182,7 +194,10 @@ export default function App(): React.JSX.Element {
 
   // 스페이스바 손도구 패닝 (#D)
   useEffect(() => {
-    const isTyping = (): boolean => document.activeElement?.tagName === 'INPUT'
+    const isTyping = (): boolean => {
+      const tag = document.activeElement?.tagName
+      return tag === 'INPUT' || tag === 'TEXTAREA'
+    }
     const down = (e: KeyboardEvent): void => {
       // 스페이스 반복 keydown도 기본 스크롤을 막아야 손툴만 동작 (#a)
       if (e.code === 'Space' && !isTyping()) {
@@ -204,7 +219,8 @@ export default function App(): React.JSX.Element {
   // 단축키
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      const inInput = (e.target as HTMLElement).tagName === 'INPUT'
+      const tag = (e.target as HTMLElement).tagName
+      const inInput = tag === 'INPUT' || tag === 'TEXTAREA'
       const s = useStore.getState()
       // 새로고침은 입력 포커스 중에도 동작 (멈춘 페이지 복구)
       if (e.key === 'F5' || (e.ctrlKey && e.key.toLowerCase() === 'r')) {

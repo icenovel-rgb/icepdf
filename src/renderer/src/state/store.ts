@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { DocInfo, Quad, Rect } from '../../../shared/types'
 
-export type Tool = 'select' | 'highlight' | 'eraser' | 'image'
+export type Tool = 'select' | 'highlight' | 'eraser' | 'image' | 'text'
 export type ViewMode = 'scroll' | 'grid' | 'slide'
 export type SidebarTab = 'thumbnails' | 'bookmarks'
 
@@ -116,6 +116,10 @@ interface AppState extends DocSlice {
   sidebar: SidebarTab | null
   sidebarWidth: number
   highlightColor: string
+  /** 텍스트 툴 스타일 (탭 전환에도 유지) */
+  textFont: string
+  textSize: number
+  textColor: string
   /** 스페이스바 손도구 패닝 모드 (#D) */
   panMode: boolean
   /** 크롬(툴바/사이드바/상태바) 숨김 — Tab */
@@ -165,6 +169,9 @@ export const useStore = create<AppState>((set, get) => ({
   sidebarWidth: 210,
   tool: 'select',
   highlightColor: '#ffe04d',
+  textFont: 'Malgun Gothic',
+  textSize: 18,
+  textColor: '#d11a1a',
   pendingImage: null,
   selection: null,
   selectedImage: null,

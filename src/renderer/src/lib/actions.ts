@@ -3,6 +3,7 @@ import { useStore, type SelectedImage } from '../state/store'
 import { clearDocImages } from './images'
 import { eng } from './engine'
 import { transformPng, imageNaturalSize, rotatedBBox } from './imgxform'
+import { renderTextToPng, type TextStyle } from './textrender'
 import {
   clearSessionImages,
   getSessionImage,
@@ -88,6 +89,58 @@ export async function saveFile(forceAsk = false): Promise<void> {
     s.showToast(`저장 실패: ${err instanceof Error ? err.message : err}`)
   } finally {
     store().set({ busy: null })
+  }
+}
+
+/**
+ * 모든 탭의 저장 안 한 변경을 저장한다 (창 닫기 전 "저장" 선택 시).
+ * 경로가 없는 문서는 저장 위치를 묻고, 사용자가 취소하면 false 를 반환(닫기 중단).
+ */
+export async function saveAllDirty(): Promise<boolean> {
+  const s = store()
+  if (s.activeTabId == null) return true
+  // s.tabs 는 시작 시점 스냅샷 — 활성 탭의 dirty/info 는 라이브 스토어가 진실
+  for (const t of s.tabs) {
+    const isActive = t.id === store().activeTabId
+    const dirty = isActive ? store().dirty : t.snapshot.dirty
+    if (!dirty) continue
+    const info = isActive ? store().info : t.snapshot.info
+    if (!info) continue
+    let path = info.filePath
+    if (!path) {
+      path = await api().saveFileDialog({
+        title: 'PDF 저장',
+        defaultPath: `${(info.title || '문서').replace(/\.pdf$/i, '')}.pdf`,
+        ext: 'pdf',
+        extName: 'PDF 문서'
+      })
+      if (!path) return false // 사용자가 저장 위치 선택 취소 → 닫기 중단
+    }
+    s.set({ busy: `저장 중... (${info.title})` })
+    await api().engine(t.docId, 'save', { path })
+    const newInfo = await api().engine(t.docId, 'docInfo', {})
+    if (isActive) {
+      store().set({ info: newInfo, dirty: false })
+    } else {
+      store().set({
+        tabs: store().tabs.map((x) =>
+          x.id === t.id ? { ...x, snapshot: { ...x.snapshot, info: newInfo, dirty: false } } : x
+        )
+      })
+    }
+  }
+  store().set({ busy: null })
+  return true
+}
+
+/** 창 닫기 다이얼로그에서 "저장"을 누르면 호출 — 전부 저장 후 메인에 닫기 확정을 알린다. */
+export async function saveAllAndClose(): Promise<void> {
+  try {
+    const ok = await saveAllDirty()
+    if (ok) await api().confirmClose()
+  } catch (err) {
+    store().set({ busy: null })
+    store().showToast(`저장 실패로 닫기를 중단했습니다: ${err instanceof Error ? err.message : err}`)
   }
 }
 
@@ -298,6 +351,44 @@ export async function placeImage(page: number, rect: Rect): Promise<void> {
     s.set({ tool: 'select', pendingImage: null, selectedImage: sel, dirty: true, epoch: s.epoch + 1 })
   } catch (err) {
     s.showToast(`이미지 삽입 실패: ${err instanceof Error ? err.message : err}`)
+  }
+}
+
+/**
+ * 텍스트 추가 — 입력한 글자를 PNG로 렌더해 Stamp 주석으로 삽입하고
+ * 즉시 선택 상태(이동/크기조절 가능)로 만든다. (한글 지원 위해 이미지 방식)
+ */
+export async function placeText(page: number, x: number, y: number, text: string, style: TextStyle): Promise<void> {
+  const s = store()
+  if (!s.info || !text.trim()) return
+  try {
+    const { png, widthPt, heightPt } = await renderTextToPng(text, style)
+    const pageInfo = s.info.pages[page]
+    // 페이지 밖으로 넘치지 않게 시작점 보정
+    const x0 = pageInfo ? Math.max(0, Math.min(x, pageInfo.width - widthPt)) : x
+    const y0 = pageInfo ? Math.max(0, Math.min(y, pageInfo.height - heightPt)) : y
+    const rect: Rect = [x0, y0, x0 + widthPt, y0 + heightPt]
+    const { index } = await eng('addImage', { page, rect, png: png.slice(0) })
+    const { width, height } = await imageNaturalSize(png)
+    const sel: SelectedImage = {
+      page,
+      index,
+      origData: png,
+      naturalW: width,
+      naturalH: height,
+      cx: (rect[0] + rect[2]) / 2,
+      cy: (rect[1] + rect[3]) / 2,
+      w0: widthPt,
+      h0: heightPt,
+      rotation: 0,
+      flipH: false,
+      flipV: false,
+      rect
+    }
+    registerSessionImage(store().activeDocId, sel)
+    s.set({ tool: 'select', selectedImage: sel, selection: null, dirty: true, epoch: s.epoch + 1 })
+  } catch (err) {
+    s.showToast(`텍스트 추가 실패: ${err instanceof Error ? err.message : err}`)
   }
 }
 
