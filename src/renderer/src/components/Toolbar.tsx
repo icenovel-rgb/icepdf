@@ -137,7 +137,7 @@ export default function Toolbar(): React.JSX.Element {
         <button className={`tb-btn ${tool === 'eraser' ? 'active' : ''}`} disabled={!has} onClick={() => set({ tool: 'eraser', pendingImage: null, selectedImage: null })} title="지우개 (형광펜/이미지/텍스트 클릭 삭제)"><Icon name="eraser" /></button>
         <button className={`tb-btn ${tool === 'text' ? 'active' : ''}`} disabled={!has} onClick={() => set({ tool: 'text', pendingImage: null, selectedImage: null })} title="텍스트 추가 (페이지 클릭 후 입력 · 추가한 글자는 더블클릭으로 수정)"><Icon name="text" /></button>
         {showTextOpts && (
-          <span className="tb-text-opts" onMouseDown={(e) => e.preventDefault()}>
+          <span className="tb-text-opts">
             <select className="tb-font" value={curFont} onChange={(e) => onFont(e.target.value)} title="글꼴">
               {TEXT_FONTS.map((f) => (
                 <option key={f.value} value={f.value}>{f.label}</option>
