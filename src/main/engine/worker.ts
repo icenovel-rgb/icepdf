@@ -18,6 +18,9 @@ interface DocState {
 /** 탭별로 열린 문서들 — docId(메인 프로세스 할당)로 키. */
 const docs = new Map<number, DocState>()
 
+/** z-순서 변경 시 Stamp를 다시 그릴 해상도 배율(포인트당 px) — 높을수록 선명, 메모리↑ */
+const REORDER_SCALE = 4
+
 function requireState(docId: number): DocState {
   const st = docs.get(docId)
   if (!st) throw new Error('열린 문서가 없습니다')
@@ -329,6 +332,51 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
     return mutate(docId, 'bookmark', () => {
       writeOutline(docId, items)
       return docInfo(docId)
+    })
+  },
+
+  reorderAnnot(docId, { page, index, where }: { page: number; index: number; where: 'front' | 'back' }) {
+    return mutate(docId, where === 'front' ? 'to-front' : 'to-back', () => {
+      const p = requireDoc(docId).loadPage(page)
+      const annots = p.getAnnotations()
+      if (!annots[index]) throw new Error('해당 주석이 없습니다')
+      // 모든 주석을 복원 레시피로 스냅샷 — Square는 속성으로 정확 복원, 그 외(Stamp 등)는
+      // 현재 모습을 고해상도로 래스터화해 Stamp로 재생성(mupdf는 주석 페인트 순서를 못 바꿈).
+      type Recipe =
+        | { kind: 'square'; rect: Rect; interior: number[]; opacity: number; border: number }
+        | { kind: 'stamp'; rect: Rect; png: Uint8Array }
+      const recipes: Recipe[] = annots.map((a) => {
+        const rect = a.getBounds() as unknown as Rect
+        if (a.getType() === 'Square') {
+          return { kind: 'square', rect, interior: a.getInteriorColor() as number[], opacity: a.getOpacity(), border: a.getBorderWidth() }
+        }
+        const pix = a.toPixmap(mupdf.Matrix.scale(REORDER_SCALE, REORDER_SCALE), mupdf.ColorSpace.DeviceRGB, true)
+        const png = pix.asPNG()
+        pix.destroy?.()
+        return { kind: 'stamp', rect, png: new Uint8Array(png) }
+      })
+      const moved = recipes[index]
+      const rest = recipes.filter((_, i) => i !== index)
+      // front = 마지막에 그림(맨 위), back = 처음에 그림(맨 아래)
+      const order = where === 'front' ? [...rest, moved] : [moved, ...rest]
+      for (const a of annots.slice()) p.deleteAnnotation(a)
+      for (const r of order) {
+        if (r.kind === 'square') {
+          const a = p.createAnnotation('Square')
+          a.setRect(r.rect)
+          a.setColor([])
+          a.setInteriorColor(r.interior as [number, number, number])
+          a.setBorderWidth(r.border)
+          a.setOpacity(r.opacity)
+          a.update()
+        } else {
+          const a = p.createAnnotation('Stamp')
+          a.setRect(r.rect)
+          a.setStampImage(new mupdf.Image(r.png))
+          a.update()
+        }
+      }
+      return { info: docInfo(docId), index: where === 'front' ? order.length - 1 : 0 }
     })
   },
 

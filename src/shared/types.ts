@@ -92,6 +92,7 @@ export interface EngineOps {
   setOutline: { args: { items: BookmarkItem[] }; result: DocInfo }
   save: { args: { path: string }; result: { path: string } }
   getPdfBuffer: { args: Record<string, never>; result: ArrayBuffer }
+  reorderAnnot: { args: { page: number; index: number; where: 'front' | 'back' }; result: { info: DocInfo; index: number } }
   undo: { args: Record<string, never>; result: { info: DocInfo; canUndo: boolean; canRedo: boolean } }
   redo: { args: Record<string, never>; result: { info: DocInfo; canUndo: boolean; canRedo: boolean } }
   undoState: { args: Record<string, never>; result: { canUndo: boolean; canRedo: boolean } }

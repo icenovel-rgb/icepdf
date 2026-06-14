@@ -799,6 +799,12 @@ input {
   background: #1f6feb;
   color: #fff;
 }
+.img-tb-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 2px;
+  background: #4a4c52;
+}
 
 /* 두쪽 보기 빈 슬롯 */
 .page-blank {

@@ -5,6 +5,7 @@ import { eng } from '../lib/engine'
 import PageCanvas from './PageCanvas'
 import {
   applyTextResize,
+  bringToFront,
   commitImageTransform,
   deselectImage,
   eraseAt,
@@ -15,6 +16,7 @@ import {
   rerenderText,
   rotateImageBy,
   selectImageAt,
+  sendToBack,
   updateSelectedImageLocal
 } from '../lib/actions'
 import { CURSOR_ERASER, CURSOR_ROTATE } from '../lib/cursors'
@@ -541,6 +543,10 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
             <button title="오른쪽 90° 회전" disabled={!canRotate} onClick={() => rotateImageBy(90)}><Icon name="rotateRight" size={16} /></button>
             <button title="좌우 반전" disabled={!canRotate} onClick={() => flipImage('h')}><Icon name="flipH" size={16} /></button>
             <button title="상하 반전" disabled={!canRotate} onClick={() => flipImage('v')}><Icon name="flipV" size={16} /></button>
+            <span className="img-tb-sep" />
+            <button title="맨 앞으로" onClick={() => void bringToFront()}><Icon name="toFront" size={16} /></button>
+            <button title="맨 뒤로" onClick={() => void sendToBack()}><Icon name="toBack" size={16} /></button>
+            <span className="img-tb-sep" />
             <button title="선택 해제" onClick={() => deselectImage()}><Icon name="check" size={16} /></button>
           </div>
         </>

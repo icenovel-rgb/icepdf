@@ -604,6 +604,29 @@ export function deselectImage(): void {
   store().set({ selectedImage: null })
 }
 
+/**
+ * 선택한 개체를 맨 앞/맨 뒤로 보낸다 (z-순서). 엔진이 주석을 새 순서로 재생성하므로
+ * 다른 주석들의 인덱스가 바뀐다 → 세션이미지를 비우고 선택 개체만 새 인덱스로 재등록.
+ */
+export async function reorderSelected(where: 'front' | 'back'): Promise<void> {
+  const s = store()
+  const sel = s.selectedImage
+  if (!sel) return
+  try {
+    const r = await eng('reorderAnnot', { page: sel.page, index: sel.index, where })
+    clearSessionImages(s.activeDocId)
+    const updated = { ...sel, index: r.index }
+    registerSessionImage(s.activeDocId, updated)
+    s.set({ info: r.info, dirty: true, epoch: s.epoch + 1, selectedImage: updated })
+    void syncUndoState()
+  } catch (err) {
+    s.showToast(`순서 변경 실패: ${err instanceof Error ? err.message : err}`)
+  }
+}
+
+export const bringToFront = (): Promise<void> => reorderSelected('front')
+export const sendToBack = (): Promise<void> => reorderSelected('back')
+
 export async function setOutline(items: BookmarkItem[]): Promise<void> {
   const s = store()
   if (!s.info) return
