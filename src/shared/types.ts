@@ -92,6 +92,9 @@ export interface EngineOps {
   setOutline: { args: { items: BookmarkItem[] }; result: DocInfo }
   save: { args: { path: string }; result: { path: string } }
   getPdfBuffer: { args: Record<string, never>; result: ArrayBuffer }
+  undo: { args: Record<string, never>; result: { info: DocInfo; canUndo: boolean; canRedo: boolean } }
+  redo: { args: Record<string, never>; result: { info: DocInfo; canUndo: boolean; canRedo: boolean } }
+  undoState: { args: Record<string, never>; result: { canUndo: boolean; canRedo: boolean } }
   close: { args: Record<string, never>; result: null }
 }
 
@@ -106,6 +109,8 @@ export type MenuAction =
   | 'prevTab'
   | 'save'
   | 'saveAs'
+  | 'undo'
+  | 'redo'
   | 'exportMarkdown'
   | 'exportHwpx'
   | 'exportImages'

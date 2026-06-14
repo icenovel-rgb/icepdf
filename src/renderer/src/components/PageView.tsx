@@ -4,6 +4,7 @@ import { usePageImage, pageRenderScale } from '../lib/images'
 import { eng } from '../lib/engine'
 import PageCanvas from './PageCanvas'
 import {
+  applyTextResize,
   commitImageTransform,
   deselectImage,
   eraseAt,
@@ -11,6 +12,7 @@ import {
   highlightSelection,
   placeImage,
   placeText,
+  rerenderText,
   rotateImageBy,
   selectImageAt,
   updateSelectedImageLocal
@@ -74,8 +76,10 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
   const lastPoint = useRef<[number, number] | null>(null)
   const [placeRect, setPlaceRect] = useState<Rect | null>(null)
   const [links, setLinks] = useState<LinkInfo[]>([])
-  // 텍스트 추가 툴: 페이지 위 인라인 편집기 (page 좌표)
-  const [textDraft, setTextDraft] = useState<{ x: number; y: number } | null>(null)
+  // 텍스트 추가 툴: 페이지 위 인라인 편집기 (page 좌표). edit가 있으면 기존 텍스트 수정.
+  const [textDraft, setTextDraft] = useState<
+    { x: number; y: number; edit?: { sel: SelectedImage } } | null
+  >(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const textCancel = useRef(false)
   /** 편집기가 실제로 포커스를 받았는지 — 클릭 시 포커스 가로채기로 인한 즉시 blur를 무시 */
@@ -162,10 +166,35 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
     const value = textareaRef.current?.value ?? ''
     textReady.current = false
     setTextDraft(null)
-    if (d && !textCancel.current && value.trim()) {
-      void placeText(page, d.x, d.y, value, { font: textFont, size: textSize, color: textColor })
+    if (!d || textCancel.current) {
+      textCancel.current = false
+      return
+    }
+    if (value.trim()) {
+      if (d.edit) {
+        // 기존 텍스트 내용 수정 — 그 사이 툴바로 스타일을 바꿨으면 라이브 선택을 우선
+        const live = useStore.getState().selectedImage
+        const base =
+          live?.text && live.page === d.edit.sel.page && live.index === d.edit.sel.index ? live : d.edit.sel
+        if (base.text) void rerenderText(base, { ...base.text, content: value })
+      } else {
+        void placeText(page, d.x, d.y, value, { font: textFont, size: textSize, color: textColor })
+      }
     }
     textCancel.current = false
+  }
+
+  // 선택된 텍스트를 더블클릭하면 내용 재편집 (읽기 도구일 때)
+  const onDoubleClick = async (e: React.PointerEvent | React.MouseEvent): Promise<void> => {
+    if (tool !== 'select' || useStore.getState().panMode) return
+    const r = ref.current!.getBoundingClientRect()
+    const x = Math.max(0, Math.min(pageInfo.width, (e.clientX - r.left) / zoom))
+    const y = Math.max(0, Math.min(pageInfo.height, (e.clientY - r.top) / zoom))
+    const picked = await selectImageAt(page, x, y)
+    const sel = useStore.getState().selectedImage
+    if (picked && sel?.text && sel.page === page) {
+      setTextDraft({ x: sel.rect[0], y: sel.rect[1], edit: { sel } })
+    }
   }
 
   const onPointerDown = (e: React.PointerEvent): void => {
@@ -248,6 +277,23 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
 
     if (d.mode === 'img-resize') {
       const ss = d.startSel
+      if (ss.text) {
+        // 텍스트 — 종횡비 고정 균일 스케일(글자 변형 없음). 커밋 시 폰트 크기로 환산해 재렌더.
+        const [rx0, ry0, rx1, ry1] = ss.rect
+        const anchor: [number, number] =
+          d.corner === 'nw' ? [rx1, ry1] : d.corner === 'ne' ? [rx0, ry1] : d.corner === 'sw' ? [rx1, ry0] : [rx0, ry0]
+        const aspect = ss.w0 / ss.h0 || 1
+        let cx = cur[0]
+        let cy = cur[1]
+        const w = Math.abs(cx - anchor[0])
+        const h = Math.abs(cy - anchor[1])
+        if (w / aspect > h) cy = anchor[1] + Math.sign(cy - anchor[1] || 1) * (w / aspect)
+        else cx = anchor[0] + Math.sign(cx - anchor[0] || 1) * (h * aspect)
+        const [x0, x1] = norm(anchor[0], cx)
+        const [y0, y1] = norm(anchor[1], cy)
+        updateSelectedImageLocal({ w0: Math.max(8, x1 - x0), h0: Math.max(8, y1 - y0), cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 })
+        return
+      }
       if (ss.rotation === 0 && !ss.flipH && !ss.flipV) {
         // 자유 스트레치 — 반대 코너 고정
         const [rx0, ry0, rx1, ry1] = ss.rect
@@ -302,7 +348,15 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
       return
     }
     if (d?.mode === 'img-move') return void commitImageTransform('move')
-    if (d?.mode === 'img-resize') return void commitImageTransform('resize')
+    if (d?.mode === 'img-resize') {
+      if (d.startSel.text) {
+        // 텍스트는 늘린 박스 배율만큼 폰트 크기를 키워 다시 렌더(글자 변형 없음)
+        const live = useStore.getState().selectedImage
+        const scale = live && d.startSel.w0 ? live.w0 / d.startSel.w0 : 1
+        return void applyTextResize(scale)
+      }
+      return void commitImageTransform('resize')
+    }
     if (d?.mode === 'img-rotate') return void commitImageTransform('rotate')
 
     if (d?.mode === 'select-text') {
@@ -324,7 +378,8 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
         ? 'crosshair'
         : 'text'
   const selBoxes = selection && selection.page === page ? selection.quads.map((q) => quadToBox(q, zoom)) : []
-  const canRotate = !!imgSel && imgSel.origData.byteLength > 0
+  // 텍스트는 회전/반전 비활성 — 항상 축정렬 유지(폰트/크기/색상 수정만)
+  const canRotate = !!imgSel && imgSel.origData.byteLength > 0 && !imgSel.text
   const r = imgSel?.rect
   const handleCursor: Record<Corner, string> = { nw: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', se: 'nwse-resize' }
 
@@ -336,6 +391,7 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onDoubleClick={onDoubleClick}
     >
       {url ? (
         <PageCanvas url={url} cssW={cssW} cssH={cssH} />
@@ -424,14 +480,14 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
           ref={textareaRef}
           className="text-draft"
           spellCheck={false}
-          defaultValue=""
+          defaultValue={textDraft.edit?.sel.text?.content ?? ''}
           style={{
             left: textDraft.x * zoom,
             top: textDraft.y * zoom,
-            fontFamily: `"${textFont}", 'Segoe UI', sans-serif`,
-            fontSize: textSize * zoom,
+            fontFamily: `"${textDraft.edit?.sel.text?.font ?? textFont}", 'Segoe UI', sans-serif`,
+            fontSize: (textDraft.edit?.sel.text?.size ?? textSize) * zoom,
             lineHeight: 1.32,
-            color: textColor
+            color: textDraft.edit?.sel.text?.color ?? textColor
           }}
           onPointerDown={(e) => e.stopPropagation()}
           onFocus={() => {
@@ -466,7 +522,7 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
             {(['nw', 'ne', 'sw', 'se'] as Corner[]).map((c) => (
               <span key={c} className={`img-handle ${c}`} style={{ cursor: handleCursor[c] }} />
             ))}
-            <span className="img-rot-stem" />
+            {canRotate && <span className="img-rot-stem" />}
           </div>
           {/* 회전 핸들 */}
           {canRotate && (

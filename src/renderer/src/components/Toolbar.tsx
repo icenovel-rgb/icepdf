@@ -10,8 +10,11 @@ import {
   insertBlankAt,
   insertFromPdfAt,
   openFile,
+  redo,
   refreshPages,
-  saveFile
+  saveFile,
+  undo,
+  updateSelectedTextStyle
 } from '../lib/actions'
 
 const HIGHLIGHT_COLORS = ['#ffe04d', '#7ee081', '#ff8fb1', '#7ec8ff']
@@ -40,6 +43,9 @@ export default function Toolbar(): React.JSX.Element {
   const textFont = useStore((s) => s.textFont)
   const textSize = useStore((s) => s.textSize)
   const textColor = useStore((s) => s.textColor)
+  const selectedImage = useStore((s) => s.selectedImage)
+  const canUndo = useStore((s) => s.canUndo)
+  const canRedo = useStore((s) => s.canRedo)
   const set = useStore((s) => s.set)
   const gotoPage = useStore((s) => s.gotoPage)
   const [ocrOpen, setOcrOpen] = useState(false)
@@ -47,11 +53,35 @@ export default function Toolbar(): React.JSX.Element {
   const has = !!info
   const zoomTo = (z: number): void => set({ zoom: Math.max(0.1, Math.min(8, z)) })
 
+  // 선택된 텍스트 객체 (있으면 그 스타일을 편집, 없으면 다음 입력의 기본 스타일)
+  const textSel = selectedImage?.text ? selectedImage : null
+  const showTextOpts = tool === 'text' || !!textSel
+  const curFont = textSel?.text?.font ?? textFont
+  const curSize = textSel?.text?.size ?? textSize
+  const curColor = textSel?.text?.color ?? textColor
+  const onFont = (font: string): void => {
+    set({ textFont: font })
+    if (textSel) void updateSelectedTextStyle({ font })
+  }
+  const onSize = (size: number): void => {
+    set({ textSize: size })
+    if (textSel) void updateSelectedTextStyle({ size })
+  }
+  const onColor = (color: string): void => {
+    set({ textColor: color })
+    if (textSel) void updateSelectedTextStyle({ color })
+  }
+
   return (
     <div className="toolbar">
       <button className="tb-btn" onClick={() => void openFile()} title="열기 (Ctrl+O)"><Icon name="open" /></button>
       <button className="tb-btn" disabled={!has} onClick={() => void saveFile()} title="저장 (Ctrl+S)"><Icon name="save" /></button>
       <button className="tb-btn" disabled={!has} onClick={() => refreshPages()} title="새로고침 — 멈춘 페이지 다시 불러오기 (F5)"><Icon name="refresh" /></button>
+
+      <span className="tb-sep" />
+
+      <button className="tb-btn" disabled={!has || !canUndo} onClick={() => void undo()} title="실행취소 (Ctrl+Z)"><Icon name="undo" /></button>
+      <button className="tb-btn" disabled={!has || !canRedo} onClick={() => void redo()} title="다시실행 (Ctrl+Shift+Z)"><Icon name="redo" /></button>
 
       <span className="tb-sep" />
 
@@ -105,10 +135,10 @@ export default function Toolbar(): React.JSX.Element {
             <button key={c} className={`swatch ${highlightColor === c ? 'active' : ''}`} style={{ background: c }} onClick={() => set({ highlightColor: c })} title={c} />
           ))}
         <button className={`tb-btn ${tool === 'eraser' ? 'active' : ''}`} disabled={!has} onClick={() => set({ tool: 'eraser', pendingImage: null, selectedImage: null })} title="지우개 (형광펜/이미지/텍스트 클릭 삭제)"><Icon name="eraser" /></button>
-        <button className={`tb-btn ${tool === 'text' ? 'active' : ''}`} disabled={!has} onClick={() => set({ tool: 'text', pendingImage: null, selectedImage: null })} title="텍스트 추가 (페이지 클릭 후 입력)"><Icon name="text" /></button>
-        {tool === 'text' && (
+        <button className={`tb-btn ${tool === 'text' ? 'active' : ''}`} disabled={!has} onClick={() => set({ tool: 'text', pendingImage: null, selectedImage: null })} title="텍스트 추가 (페이지 클릭 후 입력 · 추가한 글자는 더블클릭으로 수정)"><Icon name="text" /></button>
+        {showTextOpts && (
           <span className="tb-text-opts" onMouseDown={(e) => e.preventDefault()}>
-            <select className="tb-font" value={textFont} onChange={(e) => set({ textFont: e.target.value })} title="글꼴">
+            <select className="tb-font" value={curFont} onChange={(e) => onFont(e.target.value)} title="글꼴">
               {TEXT_FONTS.map((f) => (
                 <option key={f.value} value={f.value}>{f.label}</option>
               ))}
@@ -118,15 +148,15 @@ export default function Toolbar(): React.JSX.Element {
               type="number"
               min={6}
               max={400}
-              value={textSize}
-              onChange={(e) => set({ textSize: Math.max(6, Math.min(400, Number(e.target.value) || 18)) })}
+              value={curSize}
+              onChange={(e) => onSize(Math.max(6, Math.min(400, Number(e.target.value) || 18)))}
               title="글자 크기 (pt)"
             />
             <input
               className="tb-fontcolor"
               type="color"
-              value={textColor}
-              onChange={(e) => set({ textColor: e.target.value })}
+              value={curColor}
+              onChange={(e) => onColor(e.target.value)}
               title="글자 색상"
             />
           </span>

@@ -59,6 +59,10 @@ function buildMenu(): void {
     {
       label: '편집(&E)',
       submenu: [
+        // 단축키는 렌더러 keydown이 처리(텍스트 편집 중 네이티브 실행취소 보존) → 메뉴엔 표시만
+        { label: '실행취소', accelerator: 'CmdOrCtrl+Z', registerAccelerator: false, click: () => send('undo') },
+        { label: '다시실행', accelerator: 'CmdOrCtrl+Shift+Z', registerAccelerator: false, click: () => send('redo') },
+        { type: 'separator' },
         { label: '책갈피 추가', accelerator: 'Ctrl+B', click: () => send('addBookmark') },
         { label: '현재 페이지 OCR', accelerator: 'Ctrl+Shift+O', click: () => send('ocr') },
         { type: 'separator' },

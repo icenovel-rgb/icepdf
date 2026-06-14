@@ -19,9 +19,11 @@ import {
   exportImagesToFolder,
   ocrCurrentPage,
   openFile,
+  redo,
   refreshPages,
   saveAllAndClose,
-  saveFile
+  saveFile,
+  undo
 } from './lib/actions'
 import * as actions from './lib/actions'
 import type { MenuAction } from '../../shared/types'
@@ -62,6 +64,12 @@ function handleMenuAction(action: MenuAction): void {
       break
     case 'saveAs':
       void saveFile(true)
+      break
+    case 'undo':
+      void undo()
+      break
+    case 'redo':
+      void redo()
       break
     case 'exportMarkdown':
       void exportDoc('markdown')
@@ -229,6 +237,18 @@ export default function App(): React.JSX.Element {
         return
       }
       if (inInput) return
+      // 되돌리기 / 다시하기 (텍스트 편집 중에는 textarea가 stopPropagation → 네이티브 실행취소)
+      if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault()
+        if (e.shiftKey) void redo()
+        else void undo()
+        return
+      }
+      if (e.ctrlKey && (e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault()
+        void redo()
+        return
+      }
       const slide = s.viewMode === 'slide'
       if (e.ctrlKey && e.key === 'Tab') {
         // Ctrl+T / Ctrl+W는 메뉴 가속기가 담당 (중복 발화 방지). 순환만 여기서.

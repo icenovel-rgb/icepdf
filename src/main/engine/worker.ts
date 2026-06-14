@@ -32,6 +32,28 @@ function invalidate(docId: number): void {
   docs.get(docId)?.stCache.clear()
 }
 
+/**
+ * 변경 작업을 저널 트랜잭션으로 감싼다 — Ctrl+Z 한 번에 통째로 되돌려진다.
+ * (형광펜 여러 quad, 이미지 삽입+변형 등은 한 단위로 묶임)
+ */
+function mutate<T>(docId: number, name: string, fn: () => T): T {
+  const doc = requireDoc(docId)
+  doc.beginOperation(name)
+  try {
+    const result = fn()
+    doc.endOperation()
+    return result
+  } catch (err) {
+    doc.abandonOperation()
+    throw err
+  }
+}
+
+function undoState(docId: number): { canUndo: boolean; canRedo: boolean } {
+  const doc = requireDoc(docId)
+  return { canUndo: doc.canUndo(), canRedo: doc.canRedo() }
+}
+
 function getStructuredText(docId: number, page: number): mupdf.StructuredText {
   const st = requireState(docId)
   const cached = st.stCache.get(page)
@@ -117,6 +139,7 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
     docs.get(docId)?.doc.destroy?.()
     const buf = readFileSync(path)
     const doc = mupdf.Document.openDocument(buf, 'application/pdf') as mupdf.PDFDocument
+    doc.enableJournal() // Ctrl+Z/Ctrl+Shift+Z 되돌리기/다시하기
     docs.set(docId, { doc, path, stCache: new Map() })
     return docInfo(docId)
   },
@@ -155,51 +178,59 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
   },
 
   addHighlight(docId, { page, quads, color, opacity }: { page: number; quads: Quad[]; color: [number, number, number]; opacity: number }) {
-    const p = requireDoc(docId).loadPage(page)
-    // mupdf Highlight 주석은 끝이 둥글다 → quad별 테두리 없는 Square로 각진 형광펜 구현
-    for (const q of quads) {
-      const x0 = Math.min(q[0], q[4])
-      const y0 = Math.min(q[1], q[3])
-      const x1 = Math.max(q[2], q[6])
-      const y1 = Math.max(q[5], q[7])
-      const annot = p.createAnnotation('Square')
-      annot.setRect([x0, y0, x1, y1])
-      annot.setColor([]) // 테두리 없음
-      annot.setInteriorColor(color)
-      annot.setBorderWidth(0)
-      annot.setOpacity(opacity)
-      annot.update()
-    }
-    return { count: p.getAnnotations().length }
+    return mutate(docId, 'highlight', () => {
+      const p = requireDoc(docId).loadPage(page)
+      // mupdf Highlight 주석은 끝이 둥글다 → quad별 테두리 없는 Square로 각진 형광펜 구현
+      for (const q of quads) {
+        const x0 = Math.min(q[0], q[4])
+        const y0 = Math.min(q[1], q[3])
+        const x1 = Math.max(q[2], q[6])
+        const y1 = Math.max(q[5], q[7])
+        const annot = p.createAnnotation('Square')
+        annot.setRect([x0, y0, x1, y1])
+        annot.setColor([]) // 테두리 없음
+        annot.setInteriorColor(color)
+        annot.setBorderWidth(0)
+        annot.setOpacity(opacity)
+        annot.update()
+      }
+      return { count: p.getAnnotations().length }
+    })
   },
 
   addImage(docId, { page, rect, png }: { page: number; rect: Rect; png: ArrayBuffer }) {
-    const p = requireDoc(docId).loadPage(page)
-    const annot = p.createAnnotation('Stamp')
-    annot.setRect(rect)
-    annot.setStampImage(new mupdf.Image(new Uint8Array(png)))
-    annot.update()
-    const annots = p.getAnnotations()
-    return { index: annots.length - 1, count: annots.length }
+    return mutate(docId, 'insert', () => {
+      const p = requireDoc(docId).loadPage(page)
+      const annot = p.createAnnotation('Stamp')
+      annot.setRect(rect)
+      annot.setStampImage(new mupdf.Image(new Uint8Array(png)))
+      annot.update()
+      const annots = p.getAnnotations()
+      return { index: annots.length - 1, count: annots.length }
+    })
   },
 
   updateStamp(docId, { page, index, rect, png }: { page: number; index: number; rect: Rect; png: ArrayBuffer }) {
-    const p = requireDoc(docId).loadPage(page)
-    const annot = p.getAnnotations()[index]
-    if (!annot) throw new Error('해당 이미지 주석이 없습니다')
-    annot.setStampImage(new mupdf.Image(new Uint8Array(png)))
-    annot.setRect(rect)
-    annot.update()
-    return { count: p.getAnnotations().length }
+    return mutate(docId, 'edit', () => {
+      const p = requireDoc(docId).loadPage(page)
+      const annot = p.getAnnotations()[index]
+      if (!annot) throw new Error('해당 이미지 주석이 없습니다')
+      annot.setStampImage(new mupdf.Image(new Uint8Array(png)))
+      annot.setRect(rect)
+      annot.update()
+      return { count: p.getAnnotations().length }
+    })
   },
 
   setAnnotRect(docId, { page, index, rect }: { page: number; index: number; rect: Rect }) {
-    const p = requireDoc(docId).loadPage(page)
-    const annot = p.getAnnotations()[index]
-    if (!annot) throw new Error('해당 주석이 없습니다')
-    annot.setRect(rect)
-    annot.update()
-    return { count: p.getAnnotations().length }
+    return mutate(docId, 'move', () => {
+      const p = requireDoc(docId).loadPage(page)
+      const annot = p.getAnnotations()[index]
+      if (!annot) throw new Error('해당 주석이 없습니다')
+      annot.setRect(rect)
+      annot.update()
+      return { count: p.getAnnotations().length }
+    })
   },
 
   listAnnots(docId, { page }: { page: number }) {
@@ -249,46 +280,74 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
   },
 
   deleteAnnot(docId, { page, index }: { page: number; index: number }) {
-    const p = requireDoc(docId).loadPage(page)
-    const annots = p.getAnnotations()
-    if (!annots[index]) throw new Error('해당 주석이 없습니다')
-    p.deleteAnnotation(annots[index])
-    return { count: p.getAnnotations().length }
+    return mutate(docId, 'delete', () => {
+      const p = requireDoc(docId).loadPage(page)
+      const annots = p.getAnnotations()
+      if (!annots[index]) throw new Error('해당 주석이 없습니다')
+      p.deleteAnnotation(annots[index])
+      return { count: p.getAnnotations().length }
+    })
   },
 
   insertBlank(docId, { at }: { at: number }) {
-    const doc = requireDoc(docId)
-    const ref = Math.max(0, Math.min(at, doc.countPages() - 1))
-    const [x0, y0, x1, y1] = doc.loadPage(ref).getBounds()
-    const blank = doc.addPage([0, 0, x1 - x0, y1 - y0], 0, doc.addObject({}), '')
-    doc.insertPage(at, blank)
-    invalidate(docId)
-    return docInfo(docId)
+    return mutate(docId, 'insert-page', () => {
+      const doc = requireDoc(docId)
+      const ref = Math.max(0, Math.min(at, doc.countPages() - 1))
+      const [x0, y0, x1, y1] = doc.loadPage(ref).getBounds()
+      const blank = doc.addPage([0, 0, x1 - x0, y1 - y0], 0, doc.addObject({}), '')
+      doc.insertPage(at, blank)
+      invalidate(docId)
+      return docInfo(docId)
+    })
   },
 
   insertFromPdf(docId, { at, path }: { at: number; path: string }) {
-    const doc = requireDoc(docId)
-    const src = mupdf.Document.openDocument(readFileSync(path), 'application/pdf') as mupdf.PDFDocument
-    const n = src.countPages()
-    for (let i = 0; i < n; i++) {
-      doc.graftPage(at + i, src, i)
-    }
-    src.destroy?.()
-    invalidate(docId)
-    return docInfo(docId)
+    return mutate(docId, 'insert-pdf', () => {
+      const doc = requireDoc(docId)
+      const src = mupdf.Document.openDocument(readFileSync(path), 'application/pdf') as mupdf.PDFDocument
+      const n = src.countPages()
+      for (let i = 0; i < n; i++) {
+        doc.graftPage(at + i, src, i)
+      }
+      src.destroy?.()
+      invalidate(docId)
+      return docInfo(docId)
+    })
   },
 
   deletePage(docId, { page }: { page: number }) {
-    const doc = requireDoc(docId)
-    if (doc.countPages() <= 1) throw new Error('마지막 페이지는 삭제할 수 없습니다')
-    doc.deletePage(page)
-    invalidate(docId)
-    return docInfo(docId)
+    return mutate(docId, 'delete-page', () => {
+      const doc = requireDoc(docId)
+      if (doc.countPages() <= 1) throw new Error('마지막 페이지는 삭제할 수 없습니다')
+      doc.deletePage(page)
+      invalidate(docId)
+      return docInfo(docId)
+    })
   },
 
   setOutline(docId, { items }: { items: BookmarkItem[] }) {
-    writeOutline(docId, items)
-    return docInfo(docId)
+    return mutate(docId, 'bookmark', () => {
+      writeOutline(docId, items)
+      return docInfo(docId)
+    })
+  },
+
+  undo(docId) {
+    const doc = requireDoc(docId)
+    if (doc.canUndo()) doc.undo()
+    invalidate(docId)
+    return { info: docInfo(docId), ...undoState(docId) }
+  },
+
+  redo(docId) {
+    const doc = requireDoc(docId)
+    if (doc.canRedo()) doc.redo()
+    invalidate(docId)
+    return { info: docInfo(docId), ...undoState(docId) }
+  },
+
+  undoState(docId) {
+    return undoState(docId)
   },
 
   save(docId, { path }: { path: string }) {

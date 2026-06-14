@@ -17,7 +17,8 @@ export function registerSessionImage(docId: number, sel: SelectedImage): void {
     h0: sel.h0,
     rotation: sel.rotation,
     flipH: sel.flipH,
-    flipV: sel.flipV
+    flipV: sel.flipV,
+    text: sel.text
   })
 }
 

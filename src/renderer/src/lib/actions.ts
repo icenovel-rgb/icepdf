@@ -9,7 +9,7 @@ import {
   getSessionImage,
   registerSessionImage
 } from './session-images'
-import type { BookmarkItem, Rect } from '../../../shared/types'
+import type { BookmarkItem, DocInfo, Rect } from '../../../shared/types'
 
 const api = (): typeof window.icepdf => window.icepdf
 const store = (): ReturnType<typeof useStore.getState> => useStore.getState()
@@ -18,6 +18,55 @@ const store = (): ReturnType<typeof useStore.getState> => useStore.getState()
 function touch(): void {
   const s = store()
   s.set({ dirty: true, epoch: s.epoch + 1 })
+  void syncUndoState()
+}
+
+/** 엔진 저널의 되돌리기/다시하기 가능 상태를 스토어에 반영 — 모든 편집·undo·redo 후 호출 */
+export async function syncUndoState(): Promise<void> {
+  try {
+    const st = await eng('undoState', {})
+    store().set({ canUndo: st.canUndo, canRedo: st.canRedo })
+  } catch {
+    /* 무시 */
+  }
+}
+
+/** undo/redo 공통 마무리 — 주석 인덱스가 바뀌므로 선택·세션이미지·렌더 캐시를 비우고 재렌더 */
+function afterUndoRedo(r: { info: DocInfo; canUndo: boolean; canRedo: boolean }): void {
+  const s = store()
+  clearSessionImages(s.activeDocId)
+  clearDocImages(s.activeDocId)
+  s.set({
+    info: r.info,
+    dirty: true,
+    canUndo: r.canUndo,
+    canRedo: r.canRedo,
+    selectedImage: null,
+    selection: null,
+    ocrLayers: {},
+    epoch: s.epoch + 1,
+    currentPage: Math.min(s.currentPage, r.info.pageCount - 1)
+  })
+}
+
+export async function undo(): Promise<void> {
+  const s = store()
+  if (!s.info) return
+  try {
+    afterUndoRedo(await eng('undo', {}))
+  } catch (err) {
+    s.showToast(`되돌리기 실패: ${err instanceof Error ? err.message : err}`)
+  }
+}
+
+export async function redo(): Promise<void> {
+  const s = store()
+  if (!s.info) return
+  try {
+    afterUndoRedo(await eng('redo', {}))
+  } catch (err) {
+    s.showToast(`다시하기 실패: ${err instanceof Error ? err.message : err}`)
+  }
 }
 
 /** PDF를 새 탭으로 연다 (윈도우 탐색기 탭처럼 — 기존 탭은 유지). */
@@ -205,6 +254,7 @@ export async function deleteSelectedOrPage(): Promise<void> {
       await eng('deleteAnnot', { page: sel.page, index: sel.index })
       s.set({ selectedImage: null })
       s.applyEdit(await eng('docInfo', {}))
+      void syncUndoState()
       s.showToast('삽입한 개체를 삭제했습니다')
     } catch (err) {
       s.showToast(`삭제 실패: ${err instanceof Error ? err.message : err}`)
@@ -223,6 +273,7 @@ export async function deletePageAt(page: number): Promise<void> {
     s.applyEdit(await eng('deletePage', { page }))
     clearSessionImages(store().activeDocId)
     store().set({ ocrLayers: {} })
+    void syncUndoState()
   } catch (err) {
     s.showToast(`삭제 실패: ${err instanceof Error ? err.message : err}`)
   }
@@ -235,6 +286,7 @@ export async function insertBlankAt(at: number): Promise<void> {
     s.applyEdit(await eng('insertBlank', { at }))
     clearSessionImages(store().activeDocId)
     store().set({ ocrLayers: {} })
+    void syncUndoState()
   } catch (err) {
     s.showToast(`삽입 실패: ${err instanceof Error ? err.message : err}`)
   }
@@ -250,6 +302,7 @@ export async function insertFromPdfAt(at: number): Promise<void> {
     s.applyEdit(await eng('insertFromPdf', { at, path }))
     clearSessionImages(store().activeDocId)
     store().set({ ocrLayers: {} })
+    void syncUndoState()
     s.showToast('페이지를 삽입했습니다')
   } catch (err) {
     s.showToast(`삽입 실패: ${err instanceof Error ? err.message : err}`)
@@ -274,6 +327,7 @@ export async function highlightSelection(): Promise<void> {
       opacity: 0.45
     })
     s.applyEdit(await eng('docInfo', {}))
+    void syncUndoState()
   } catch (err) {
     s.showToast(`형광펜 실패: ${err instanceof Error ? err.message : err}`)
   }
@@ -288,6 +342,7 @@ export async function eraseAt(page: number, x: number, y: number): Promise<boole
     if (!hit) return false
     await eng('deleteAnnot', { page, index: hit.index })
     s.applyEdit(await eng('docInfo', {}))
+    void syncUndoState()
     return true
   } catch (err) {
     s.showToast(`지우기 실패: ${err instanceof Error ? err.message : err}`)
@@ -349,6 +404,7 @@ export async function placeImage(page: number, rect: Rect): Promise<void> {
     }
     registerSessionImage(store().activeDocId, sel)
     s.set({ tool: 'select', pendingImage: null, selectedImage: sel, dirty: true, epoch: s.epoch + 1 })
+    void syncUndoState()
   } catch (err) {
     s.showToast(`이미지 삽입 실패: ${err instanceof Error ? err.message : err}`)
   }
@@ -383,13 +439,80 @@ export async function placeText(page: number, x: number, y: number, text: string
       rotation: 0,
       flipH: false,
       flipV: false,
-      rect
+      rect,
+      text: { content: text, font: style.font, size: style.size, color: style.color }
     }
     registerSessionImage(store().activeDocId, sel)
     s.set({ tool: 'select', selectedImage: sel, selection: null, dirty: true, epoch: s.epoch + 1 })
+    void syncUndoState()
   } catch (err) {
     s.showToast(`텍스트 추가 실패: ${err instanceof Error ? err.message : err}`)
   }
+}
+
+/**
+ * 선택된 텍스트 주석을 새 내용/스타일로 다시 렌더해 교체한다 (좌상단 고정).
+ * 폰트·크기·색상·내용 수정과 비례 크기조절이 모두 이 경로를 쓴다 → Stamp 이미지를
+ * 늘리지 않고 텍스트를 새로 그리므로 글자가 변형되지 않는다.
+ */
+export async function rerenderText(
+  sel: SelectedImage,
+  next: { content: string; font: string; size: number; color: string }
+): Promise<void> {
+  const s = store()
+  if (!sel.text) return
+  try {
+    const { png, widthPt, heightPt } = await renderTextToPng(next.content, {
+      font: next.font,
+      size: next.size,
+      color: next.color
+    })
+    const x0 = sel.rect[0]
+    const y0 = sel.rect[1]
+    const rect: Rect = [x0, y0, x0 + widthPt, y0 + heightPt]
+    await eng('updateStamp', { page: sel.page, index: sel.index, rect, png: png.slice(0) })
+    const { width, height } = await imageNaturalSize(png)
+    const updated: SelectedImage = {
+      ...sel,
+      origData: png,
+      naturalW: width,
+      naturalH: height,
+      cx: (rect[0] + rect[2]) / 2,
+      cy: (rect[1] + rect[3]) / 2,
+      w0: widthPt,
+      h0: heightPt,
+      rotation: 0,
+      flipH: false,
+      flipV: false,
+      rect,
+      text: { ...next }
+    }
+    registerSessionImage(store().activeDocId, updated)
+    s.set({ selectedImage: updated, dirty: true, epoch: s.epoch + 1 })
+    void syncUndoState()
+  } catch (err) {
+    s.showToast(`텍스트 수정 실패: ${err instanceof Error ? err.message : err}`)
+  }
+}
+
+/** 선택된 텍스트의 폰트/크기/색상 변경 (툴바에서) — 즉시 재렌더 */
+export async function updateSelectedTextStyle(patch: Partial<{ font: string; size: number; color: string }>): Promise<void> {
+  const sel = store().selectedImage
+  if (!sel?.text) return
+  await rerenderText(sel, { ...sel.text, ...patch })
+}
+
+/** 텍스트 비례 크기조절 — 드래그한 박스 배율(scale)만큼 폰트 크기를 키워 다시 렌더 */
+export async function applyTextResize(scale: number): Promise<void> {
+  const sel = store().selectedImage
+  if (!sel?.text) return
+  const size = Math.max(6, Math.min(400, Math.round(sel.text.size * scale)))
+  if (size === sel.text.size) {
+    // 크기 변화 없음 — 드래그로 어긋난 오버레이만 원위치
+    store().set({ selectedImage: { ...sel, w0: sel.rect[2] - sel.rect[0], h0: sel.rect[3] - sel.rect[1] } })
+    return
+  }
+  await rerenderText(sel, { ...sel.text, size })
 }
 
 /** 드래그 중 라이브 갱신 (엔진 호출 없이 오버레이만) */
@@ -487,6 +610,7 @@ export async function setOutline(items: BookmarkItem[]): Promise<void> {
   try {
     const info = await eng('setOutline', { items })
     s.set({ info, dirty: true })
+    void syncUndoState()
   } catch (err) {
     s.showToast(`책갈피 저장 실패: ${err instanceof Error ? err.message : err}`)
   }

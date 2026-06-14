@@ -46,6 +46,8 @@ export interface SelectedImage {
   flipV: boolean
   /** 파생된 축정렬 바운딩박스 (엔진/오버레이용) */
   rect: Rect
+  /** 텍스트 주석이면 원본 텍스트/스타일(재편집·비례 크기조절용). 일반 삽입 이미지면 undefined */
+  text?: { content: string; font: string; size: number; color: string }
 }
 
 /** 문서(탭)마다 독립적으로 보존되는 상태 슬라이스 */
@@ -67,6 +69,9 @@ export interface DocSlice {
   epoch: number
   scrollTarget: number | null
   navSeq: number
+  /** 되돌리기/다시하기 가능 여부 (문서별) */
+  canUndo: boolean
+  canRedo: boolean
 }
 
 /** 윈도우 탐색기 스타일 탭 — 각자 독립 문서(docId)와 슬라이스 보유 */
@@ -80,7 +85,7 @@ export interface Tab {
 const SLICE_KEYS = [
   'info', 'dirty', 'currentPage', 'zoom', 'fitWidthTick', 'fitPageTick', 'viewMode',
   'spread', 'cover', 'tool', 'pendingImage', 'selection', 'selectedImage', 'ocrLayers',
-  'epoch', 'scrollTarget', 'navSeq'
+  'epoch', 'scrollTarget', 'navSeq', 'canUndo', 'canRedo'
 ] as const
 
 const EMPTY_SLICE: DocSlice = {
@@ -100,7 +105,9 @@ const EMPTY_SLICE: DocSlice = {
   ocrLayers: {},
   epoch: 0,
   scrollTarget: null,
-  navSeq: 0
+  navSeq: 0,
+  canUndo: false,
+  canRedo: false
 }
 
 let nextTabId = 1
@@ -185,6 +192,8 @@ export const useStore = create<AppState>((set, get) => ({
   toast: null,
   scrollTarget: null,
   navSeq: 0,
+  canUndo: false,
+  canRedo: false,
 
   set: (partial) => set(partial),
 

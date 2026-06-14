@@ -8,8 +8,8 @@
 
 /** 화면/엔진 좌표는 포인트(pt), 캔버스는 그 SS배 픽셀로 그려 축소 시에도 선명 */
 const SS = 4
-/** 글자 위아래 잘림 방지용 여백 (pt) */
-const PAD = 2
+/** 글자 잘림 방지용 여백 — 폰트 크기에 비례(크기 바꿔도 박스 종횡비 일정 → 비례 스케일) */
+const PAD_RATIO = 0.12
 const LINE_HEIGHT = 1.32
 
 export interface TextStyle {
@@ -60,7 +60,7 @@ export async function renderTextToPng(text: string, style: TextStyle): Promise<R
     maxWidthPx = Math.max(maxWidthPx, measure.measureText(line || ' ').width)
   }
 
-  const padPx = PAD * SS
+  const padPx = Math.max(2, sizePx * PAD_RATIO)
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.ceil(maxWidthPx + padPx * 2))
   canvas.height = Math.max(1, Math.ceil(lineHeightPx * lines.length + padPx * 2))
