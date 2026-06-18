@@ -279,8 +279,13 @@ export default function App(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // 외부 파일 드래그인지(책갈피 등 내부 드래그와 구분) — 내부 드래그는 자식이 처리
+  const isFileDrag = (e: React.DragEvent): boolean =>
+    Array.from(e.dataTransfer?.types ?? []).includes('Files')
+
   // 드래그드롭으로 PDF 열기 (#1)
   const onDrop = (e: React.DragEvent): void => {
+    if (!isFileDrag(e)) return
     e.preventDefault()
     setDragOver(false)
     const file = e.dataTransfer.files[0]
@@ -297,6 +302,7 @@ export default function App(): React.JSX.Element {
     <div
       className="app"
       onDragOver={(e) => {
+        if (!isFileDrag(e)) return // 책갈피 순서 변경 등 내부 드래그는 가로채지 않음
         e.preventDefault()
         if (!dragOver) setDragOver(true)
       }}

@@ -310,10 +310,25 @@ input {
   padding: 8px 4px;
 }
 .bm-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   padding: 0 6px 8px;
 }
-.bm-header button {
+.bm-header > button {
   width: 100%;
+}
+.bm-actions {
+  display: flex;
+  gap: 6px;
+}
+.bm-actions button {
+  flex: 1;
+  min-width: 0;
+}
+.bm-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 .bm-empty {
   color: #999;
@@ -321,15 +336,41 @@ input {
   padding: 18px 8px;
   line-height: 1.7;
 }
+.bm-hint {
+  color: #777;
+  font-size: 10px;
+  padding: 0 8px 6px;
+  line-height: 1.5;
+}
 .bm-row {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 3px 6px;
   border-radius: 4px;
+  user-select: none;
 }
 .bm-row:hover {
   background: #2f2f2f;
+}
+.bm-row--sel,
+.bm-row--sel:hover {
+  background: #2f4a6b;
+}
+.bm-row--drop-before {
+  box-shadow: inset 0 2px 0 #7ec8ff;
+}
+.bm-row--drop-after {
+  box-shadow: inset 0 -2px 0 #7ec8ff;
+}
+.bm-droproot {
+  min-height: 28px;
+  margin: 2px 6px;
+  border-radius: 4px;
+}
+.bm-droproot--over {
+  background: #2f4a6b;
+  outline: 1px dashed #7ec8ff;
 }
 .bm-title {
   flex: 1;
