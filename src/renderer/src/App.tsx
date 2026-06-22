@@ -9,6 +9,7 @@ import ThumbnailPanel from './components/ThumbnailPanel'
 import BookmarkPanel from './components/BookmarkPanel'
 import StatusBar from './components/StatusBar'
 import SupportModal from './components/SupportModal'
+import PrintModal from './components/PrintModal'
 import {
   addBookmarkAtCurrentPage,
   closeTabById,
@@ -64,6 +65,9 @@ function handleMenuAction(action: MenuAction): void {
       break
     case 'saveAs':
       void saveFile(true)
+      break
+    case 'print':
+      if (s.info) s.set({ showPrint: true })
       break
     case 'undo':
       void undo()
@@ -358,6 +362,7 @@ export default function App(): React.JSX.Element {
       )}
       {dragOver && <div className="drop-overlay">여기에 PDF를 놓으세요</div>}
       <SupportModal />
+      <PrintModal />
       {toast && <div className="toast">{toast}</div>}
     </div>
   )

@@ -110,6 +110,7 @@ export type MenuAction =
   | 'prevTab'
   | 'save'
   | 'saveAs'
+  | 'print'
   | 'undo'
   | 'redo'
   | 'exportMarkdown'

@@ -1,5 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { Worker } from 'node:worker_threads'
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { closeDoc, engineCall, openDoc } from './engine/proxy'
 import type { ConvertResult, EngineOpName } from '../shared/types'
@@ -192,5 +194,37 @@ export function registerIpc(): void {
     const win = BrowserWindow.fromWebContents(e.sender)!
     const r = await dialog.showOpenDialog(win, { title, properties: ['openDirectory', 'createDirectory'] })
     return r.canceled ? null : r.filePaths[0]
+  })
+
+  // 인쇄 — 렌더러가 만든 자기완결 HTML(모아찍기 그리드 + data URL 이미지)을
+  // 숨김 창에 로드 후 OS 인쇄 다이얼로그를 띄운다. 미리보기와 동일한 HTML이라 WYSIWYG.
+  ipcMain.handle('print:run', async (_e, html: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'icepdf-print-'))
+    const htmlPath = join(dir, 'print.html')
+    writeFileSync(htmlPath, html, 'utf-8')
+    const win = new BrowserWindow({ show: false, webPreferences: { sandbox: false } })
+    const cleanup = (): void => {
+      try {
+        rmSync(dir, { recursive: true, force: true })
+      } catch {
+        /* 임시 파일 정리 실패는 무시 */
+      }
+    }
+    try {
+      await win.loadFile(htmlPath)
+      // data URL 이미지가 실제로 디코드된 뒤 인쇄해야 빈 페이지가 안 나온다
+      await win.webContents.executeJavaScript(
+        'Promise.all([...document.images].map((i) => i.decode().catch(() => {})))'
+      )
+      await new Promise<void>((resolve) => {
+        win.webContents.print({ silent: false, printBackground: true }, () => resolve())
+      })
+    } catch (err) {
+      console.error('인쇄 실패:', err)
+      throw new Error(err instanceof Error ? err.message : '인쇄에 실패했습니다')
+    } finally {
+      if (!win.isDestroyed()) win.close()
+      cleanup()
+    }
   })
 }

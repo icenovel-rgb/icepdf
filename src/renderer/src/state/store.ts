@@ -135,6 +135,8 @@ interface AppState extends DocSlice {
   fullscreen: boolean
   /** 후원 모달 표시 */
   showSupport: boolean
+  /** 인쇄 미리보기 모달 표시 */
+  showPrint: boolean
   busy: string | null
   toast: string | null
 
@@ -187,6 +189,7 @@ export const useStore = create<AppState>((set, get) => ({
   fullscreen: false,
   ocrLayers: {},
   showSupport: false,
+  showPrint: false,
   epoch: 0,
   busy: null,
   toast: null,

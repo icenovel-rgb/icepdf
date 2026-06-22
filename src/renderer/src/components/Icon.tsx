@@ -39,7 +39,8 @@ const PATHS: Record<string, string[]> = {
   undo: ['M9 14 4 9l5-5', 'M4 9h11a5 5 0 0 1 0 10h-4'],
   redo: ['m15 14 5-5-5-5', 'M20 9H9a5 5 0 0 0 0 10h4'],
   toFront: ['M5 3h14', 'M12 21V8', 'm7 13 5-5 5 5'],
-  toBack: ['M5 21h14', 'M12 3v13', 'm7 11 5 5 5-5']
+  toBack: ['M5 21h14', 'M12 3v13', 'm7 11 5 5 5-5'],
+  printer: ['M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6', 'M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2', 'M6 14h12v8H6z']
 }
 
 interface Props {

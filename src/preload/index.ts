@@ -36,6 +36,10 @@ const api = {
   chooseFolder(title: string): Promise<string | null> {
     return ipcRenderer.invoke('dialog:chooseFolder', title)
   },
+  /** 자기완결 인쇄 HTML을 숨김 창에서 인쇄 (모아찍기 미리보기와 동일 HTML) */
+  printHtml(html: string): Promise<void> {
+    return ipcRenderer.invoke('print:run', html)
+  },
   ocrPage(
     docId: number,
     page: number,

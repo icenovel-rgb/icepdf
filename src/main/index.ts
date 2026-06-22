@@ -44,6 +44,8 @@ function buildMenu(): void {
         { label: '저장', accelerator: 'Ctrl+S', click: () => send('save') },
         { label: '다른 이름으로 저장...', accelerator: 'Ctrl+Shift+S', click: () => send('saveAs') },
         { type: 'separator' },
+        { label: '인쇄...', accelerator: 'Ctrl+P', click: () => send('print') },
+        { type: 'separator' },
         {
           label: '내보내기',
           submenu: [

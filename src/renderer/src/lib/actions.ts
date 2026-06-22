@@ -4,6 +4,7 @@ import { clearDocImages } from './images'
 import { eng } from './engine'
 import { transformPng, imageNaturalSize, rotatedBBox } from './imgxform'
 import { renderTextToPng, type TextStyle } from './textrender'
+import { parsePageSpec } from './print'
 import {
   clearSessionImages,
   getSessionImage,
@@ -688,22 +689,15 @@ export async function ocrAllPages(): Promise<void> {
   if (s.info) await ocrPages(Array.from({ length: s.info.pageCount }, (_, i) => i))
 }
 
-/** "1-5,8" 형식 → 0-based 페이지 인덱스 */
+/** "1-5,8" 형식 → 0-based 페이지 인덱스 (parsePageSpec 공용) */
 export async function ocrPageRange(spec: string): Promise<void> {
   const s = store()
   if (!s.info) return
-  const pages = new Set<number>()
-  for (const part of spec.split(',')) {
-    const m = part.trim().match(/^(\d+)\s*-\s*(\d+)$/)
-    if (m) {
-      const a = parseInt(m[1], 10)
-      const b = parseInt(m[2], 10)
-      for (let i = Math.min(a, b); i <= Math.max(a, b); i++) pages.add(i - 1)
-    } else if (/^\d+$/.test(part.trim())) {
-      pages.add(parseInt(part.trim(), 10) - 1)
-    }
+  if (!spec.trim()) {
+    s.showToast('유효한 페이지 범위가 아닙니다 (예: 1-5,8)')
+    return
   }
-  const valid = [...pages].filter((p) => p >= 0 && p < s.info!.pageCount).sort((a, b) => a - b)
+  const valid = parsePageSpec(spec, s.info.pageCount)
   if (!valid.length) {
     s.showToast('유효한 페이지 범위가 아닙니다 (예: 1-5,8)')
     return

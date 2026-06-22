@@ -1071,6 +1071,175 @@ input {
   color: #fff;
 }
 
+/* ── 인쇄 미리보기 모달 (좌측 설정 패널 + 우측 미리보기) ── */
+/* 닫기 X가 우측 흰 미리보기 위에 오므로 배경을 줘 시인성 확보 */
+.print-modal .modal-close {
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  z-index: 5;
+}
+.print-modal .modal-close:hover {
+  background: rgba(0, 0, 0, 0.6);
+}
+.print-modal {
+  position: relative;
+  width: 92vw;
+  max-width: 1000px;
+  height: 88vh;
+  display: flex;
+  background: #2a2b2e;
+  border: 1px solid #3c3e44;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+.print-side {
+  width: 244px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px 20px;
+  background: #2d2e31;
+  border-right: 1px solid #3c3e44;
+}
+.print-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 600;
+  white-space: nowrap;
+  margin-bottom: 2px;
+}
+.print-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #a9adb4;
+  white-space: nowrap;
+}
+.print-field select,
+.print-field input {
+  width: 100%;
+  background: #1f2023;
+  color: #eee;
+  border: 1px solid #4a4d54;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.print-field select:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.print-apply {
+  width: 100%;
+  border: 1px solid #4a4d54;
+  background: #34363b;
+  color: #e6e6e6;
+  border-radius: 6px;
+  padding: 9px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.print-apply:hover:not(:disabled) {
+  background: #3f4248;
+}
+.print-apply:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.print-meta {
+  font-size: 12px;
+  color: #8a8f97;
+  text-align: center;
+}
+.print-side-flex {
+  flex: 1;
+}
+.print-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid #3c3e44;
+  padding-top: 16px;
+}
+.print-actions button {
+  width: 100%;
+  padding: 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  border: 1px solid #4a4d54;
+}
+.print-cancel {
+  background: #34363b;
+  color: #e6e6e6;
+}
+.print-cancel:hover:not(:disabled) {
+  background: #3f4248;
+}
+.print-go {
+  background: #1f6feb;
+  border-color: #1f6feb;
+  color: #fff;
+  font-weight: 600;
+}
+.print-go:hover:not(:disabled) {
+  background: #3b82f6;
+}
+.print-go:disabled,
+.print-cancel:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.print-preview {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  background: #3a3c40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+.print-status {
+  color: #c8ccd2;
+  font-size: 14px;
+  padding: 40px;
+}
+.print-sheet {
+  width: 100%;
+  max-width: 600px;
+  aspect-ratio: 210 / 297;
+  background: #fff;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.5);
+  padding: 4%;
+  display: grid;
+  gap: 3%;
+  flex: none;
+}
+/* 1쪽 인쇄 미리보기 — 여백 없이 페이지를 시트에 꽉 (인쇄 결과와 동일) */
+.print-sheet.single {
+  padding: 0;
+  gap: 0;
+}
+.print-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.print-cell img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
 /* ── 탭 바 (윈도우 탐색기 스타일) ── */
 .tab-bar {
   display: flex;

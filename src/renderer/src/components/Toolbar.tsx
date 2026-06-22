@@ -179,6 +179,12 @@ export default function Toolbar(): React.JSX.Element {
       <span className="tb-spacer" />
 
       <span className="tb-group">
+        <button className="tb-btn" disabled={!has} onClick={() => set({ showPrint: true })} title="인쇄 (Ctrl+P)"><Icon name="printer" /></button>
+      </span>
+
+      <span className="tb-sep" />
+
+      <span className="tb-group">
         <button className="tb-btn tb-text" disabled={!has} onClick={() => void exportDoc('markdown')} title="Markdown으로 내보내기"><Icon name="download" /> MD</button>
         <button className="tb-btn tb-text" disabled={!has} onClick={() => void exportDoc('hwpx')} title="한글 문서로 내보내기 (텍스트+이미지)"><Icon name="download" /> 한글</button>
         <button className="tb-btn tb-text" disabled={!has} onClick={() => void exportImagesToFolder()} title="각 페이지를 이미지로 폴더에 저장"><Icon name="download" /> 이미지</button>
