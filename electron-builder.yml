@@ -26,6 +26,8 @@ fileAssociations:
 nsis:
   oneClick: true
   perMachine: false
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
   artifactName: ICEPDF-Setup-${version}.exe
   shortcutName: ICEPDF
   uninstallDisplayName: ICEPDF
