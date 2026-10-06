@@ -56,10 +56,21 @@ npx tsx tests/store-tabs.test.mts # 비동기 결과가 시작한 문서 탭에�
 npx tsx tests/epub-engine.test.mts # EPUB 열기·목차·구간 검색·EPUB→PDF 변환(실제 mupdf)
 node tests/smoke-find.mjs      # e2e — Ctrl+F 실제 키 입력 (빌드 후)
 node tests/smoke-epub.mjs      # e2e — EPUB 읽기·글자 크기·목차·PDF 변환·Markdown 내보내기 (빌드 후)
+npx tsx tests/version.test.mts    # 새 버전 알림 — 버전 비교·GitHub 응답 검증
+node tests/smoke-update.mjs    # e2e — 로컬 가짜 GitHub 서버로 알림 카드·다운로드·수동 확인 (빌드 후)
 npm run dist       # NSIS 설치파일 생성 → release/ICEPDF-Setup-*.exe
 node tests/packaged-smoke.mjs  # 패키징된 앱 검증 (이미지 포함 HWPX)
 ICEPDF_EXE=release/win-unpacked/ICEPDF.exe node tests/smoke-epub.mjs  # 패키징 앱으로 EPUB·변환 검증 (smoke-find도 동일)
 ```
+
+## 새 버전 배포 (자동)
+
+1. `package.json`의 `version`을 올려 커밋한다 (커밋 메시지가 릴리스 노트가 됨)
+2. `publish` 브랜치에 푸시한다
+3. GitHub Actions(`.github/workflows/release.yml`)가 Windows에서 설치파일을 빌드해 **GitHub Releases**에 `v<버전>`으로 게시한다 (이미 있는 버전이면 건너뜀)
+4. 설치된 ICEPDF(v1.9.0 이상)는 실행 3초 뒤 최신 릴리스를 확인해 새 버전이면 왼쪽 아래에 **새 버전 알림**(다운로드 → 릴리스 페이지)을 띄운다. 수동 확인: 도움말 → 업데이트 확인
+
+※ v1.8.0 이하에는 확인 기능이 없어 알림이 가지 않는다 — v1.9.0은 한 번 직접 배포해야 한다.
 
 ## 알려진 한계
 

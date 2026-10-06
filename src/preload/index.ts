@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { ConvertResult, DocInfo, EngineOpName, EngineOps, MenuAction } from '../shared/types'
+import type { UpdateCheckResult } from '../shared/version'
 
 const api = {
   engine<K extends EngineOpName>(docId: number, op: K, args: EngineOps[K]['args']): Promise<EngineOps[K]['result']> {
@@ -67,6 +68,13 @@ const api = {
   },
   getInitialFile(): Promise<string | null> {
     return ipcRenderer.invoke('app:getInitialFile')
+  },
+  getVersion(): Promise<string> {
+    return ipcRenderer.invoke('app:getVersion')
+  },
+  /** GitHub Releases 최신 버전 확인 — auto=true는 설치본에서만 실제 요청 */
+  checkUpdate(auto: boolean): Promise<UpdateCheckResult> {
+    return ipcRenderer.invoke('update:check', auto)
   },
   /** 드래그드롭된 File의 실제 경로 (Electron webUtils) */
   pathForFile(file: File): string {

@@ -11,6 +11,8 @@ import StatusBar from './components/StatusBar'
 import SupportModal from './components/SupportModal'
 import PrintModal from './components/PrintModal'
 import FindBar from './components/FindBar'
+import UpdateBanner from './components/UpdateBanner'
+import { AUTO_CHECK_DELAY, runUpdateCheck } from './lib/update'
 import { closeFind, findStep, installFindAutoRerun, openFind } from './lib/finder'
 import { EPUB_FONT, isOpenableDocPath } from '../../shared/doc-kind'
 import {
@@ -140,6 +142,9 @@ function handleMenuAction(action: MenuAction): void {
     case 'support':
       s.set({ showSupport: true })
       break
+    case 'checkUpdate':
+      void runUpdateCheck(true)
+      break
   }
 }
 
@@ -194,6 +199,13 @@ export default function App(): React.JSX.Element {
 
   // 찾기 막대가 열린 채 문서가 바뀌면(탭 전환·편집·EPUB 글자 크기) 자동 재검색
   useEffect(() => installFindAutoRerun(), [])
+
+  // 버전 표시 + 실행 직후 새 버전 확인 (설치본에서만 실제 요청 — 메인이 판단)
+  useEffect(() => {
+    void window.icepdf.getVersion().then((v) => useStore.getState().set({ appVersion: v }))
+    const t = setTimeout(() => void runUpdateCheck(false), AUTO_CHECK_DELAY)
+    return () => clearTimeout(t)
+  }, [])
 
   useEffect(() => {
     const title = info ? `${dirty ? '● ' : ''}${info.title} — ICEPDF` : 'ICEPDF'
@@ -409,6 +421,7 @@ export default function App(): React.JSX.Element {
       {dragOver && <div className="drop-overlay">여기에 PDF·EPUB을 놓으세요</div>}
       <SupportModal />
       <PrintModal />
+      <UpdateBanner />
       {toast && <div className="toast">{toast}</div>}
     </div>
   )

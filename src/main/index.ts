@@ -110,6 +110,7 @@ function buildMenu(): void {
       label: '도움말(&H)',
       submenu: [
         { label: 'ICEPDF 정보', click: () => send('support') },
+        { label: '업데이트 확인...', click: () => send('checkUpdate') },
         { label: 'kordoc (변환 엔진)', click: () => shell.openExternal('https://github.com/chrisryugj/kordoc') }
       ]
     }

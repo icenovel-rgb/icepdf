@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { closeDoc, engineCall, openDoc } from './engine/proxy'
+import { checkForUpdate } from './update-check'
 import type { ConvertResult, EngineOpName } from '../shared/types'
 
 // ── kordoc 변환 워커 RPC ──
@@ -184,6 +185,11 @@ export function registerIpc(): void {
     }))
     return { text: result.text, words }
   })
+
+  ipcMain.handle('app:getVersion', () => app.getVersion())
+
+  // 새 버전 확인 — auto=true는 실행 시 자동(설치본만), false는 메뉴 "업데이트 확인"
+  ipcMain.handle('update:check', (_e, auto: boolean) => checkForUpdate(!!auto))
 
   ipcMain.handle('app:setTitle', (e, title: string) => {
     BrowserWindow.fromWebContents(e.sender)?.setTitle(title)

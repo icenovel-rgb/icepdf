@@ -1405,3 +1405,44 @@ input {
   min-width: 36px;
   text-align: center;
 }
+
+/* 새 버전 알림 카드 — 왼쪽 아래 (토스트는 오른쪽 아래) */
+.update-banner {
+  position: fixed;
+  left: 18px;
+  bottom: 40px;
+  z-index: 280;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 10px 14px;
+  background: #2d2d30;
+  border: 1px solid #388bfd;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+.update-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.update-sub {
+  color: #9498a0;
+  font-size: 11px;
+}
+.update-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #1f6feb;
+  border-color: #388bfd;
+  color: #fff;
+}
+.update-later {
+  background: transparent;
+}
+.support-ver {
+  font-size: 14px;
+  font-weight: 400;
+  color: #9498a0;
+}

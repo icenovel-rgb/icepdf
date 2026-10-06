@@ -149,3 +149,4 @@ export type MenuAction =
   | 'toggleSidebar'
   | 'toggleFullscreen'
   | 'support'
+  | 'checkUpdate'

@@ -8,6 +8,7 @@ const URL = 'https://buymeacoffee.com/icenovel'
 /** 후원 모달 — Buy Me a Coffee 링크 + QR */
 export default function SupportModal(): React.JSX.Element | null {
   const show = useStore((s) => s.showSupport)
+  const version = useStore((s) => s.appVersion)
   const set = useStore((s) => s.set)
 
   useEffect(() => {
@@ -27,7 +28,9 @@ export default function SupportModal(): React.JSX.Element | null {
         <button className="modal-close" onClick={() => set({ showSupport: false })} title="닫기">
           <Icon name="x" size={16} />
         </button>
-        <h2>ICEPDF</h2>
+        <h2>
+          ICEPDF {version && <span className="support-ver">v{version}</span>}
+        </h2>
         <p className="support-sub">아크로벳 스타일 PDF 뷰어 · 편집 · 한글/이미지 변환</p>
         <img className="support-qr" src={SUPPORT_QR} alt="Buy Me a Coffee QR" />
         <p className="support-msg">도움이 되셨다면 커피 한 잔으로 응원해 주세요 ☕</p>

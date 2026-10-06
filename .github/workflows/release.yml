@@ -1,0 +1,69 @@
+# 새 버전 자동 게시 — publish 브랜치에 푸시되면, package.json 버전의 릴리스(v<버전>)가
+# 아직 없을 때만 Windows에서 설치파일을 빌드해 GitHub Releases에 올린다.
+# 설치된 ICEPDF는 실행할 때 이 Releases의 최신 버전을 읽어 "새 버전 알림"을 띄운다.
+# → 릴리스 방법: package.json 버전을 올려 커밋하고 publish에 푸시하면 끝.
+name: release
+
+on:
+  push:
+    branches: [publish]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 버전 확인 (이미 게시된 버전이면 건너뜀)
+        id: ver
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(node -p "require('./package.json').version")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if gh release view "v$V" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "v$V 릴리스가 이미 있어 빌드를 건너뜁니다"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "v$V 릴리스를 새로 만듭니다"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.ver.outputs.exists == 'false'
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: 의존성 설치
+        if: steps.ver.outputs.exists == 'false'
+        run: npm ci
+
+      - name: 설치파일 빌드
+        if: steps.ver.outputs.exists == 'false'
+        env:
+          # 코드 서명 인증서가 없으므로 자동 탐색하지 않는다 (서명 없는 설치파일)
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run dist
+
+      - name: 릴리스 게시
+        if: steps.ver.outputs.exists == 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          EXE="release/ICEPDF-Setup-$V.exe"
+          test -f "$EXE" || { echo "설치파일이 없습니다: $EXE"; ls release; exit 1; }
+          # 릴리스 노트 = 이 커밋의 메시지
+          git log -1 --format=%B > notes.md
+          gh release create "v$V" "$EXE" --target "$GITHUB_SHA" --title "ICEPDF v$V" --notes-file notes.md

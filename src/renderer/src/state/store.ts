@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { DocInfo, Quad, Rect, SearchHit } from '../../../shared/types'
 import type { FindStatus } from '../lib/find'
+import type { LatestRelease } from '../../../shared/version'
 
 export type Tool = 'select' | 'highlight' | 'eraser' | 'image' | 'text'
 export type ViewMode = 'scroll' | 'grid' | 'slide'
@@ -157,6 +158,11 @@ interface AppState extends DocSlice {
   /** 증가 시 찾기 입력칸에 포커스+전체선택 (이미 열려 있을 때 Ctrl+F) */
   findFocusTick: number
 
+  /** 실행 중인 앱 버전 (정보 창 표시) */
+  appVersion: string
+  /** 새 버전이 있으면 알림 카드 표시 — 닫으면 null */
+  update: LatestRelease | null
+
   set: (partial: Partial<AppState>) => void
   applyEdit: (info: DocInfo) => void
   gotoPage: (page: number) => void
@@ -230,6 +236,8 @@ export const useStore = create<AppState>((set, get) => ({
   findStatus: 'idle',
   findCapped: false,
   findFocusTick: 0,
+  appVersion: '',
+  update: null,
 
   set: (partial) => set(partial),
 
