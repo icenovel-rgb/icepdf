@@ -1,15 +1,20 @@
 /**
  * mupdf 문서 엔진 — worker_thread에서 실행.
- * 문서 1개를 소유하고 RPC 메시지로 조작한다. 모든 좌표는 fitz 공간.
+ * 탭별 문서(PDF/EPUB)를 소유하고 RPC 메시지로 조작한다. 모든 좌표는 fitz 공간.
+ * EPUB은 리플로우 읽기 전용 — 편집 연산은 requireDoc()에서 막힌다.
  */
 import { parentPort } from 'node:worker_threads'
 import { readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import * as mupdf from 'mupdf'
 import type { BookmarkItem, DocInfo, LinkInfo, Quad, Rect } from '../../shared/types'
+import { EPUB_PAGE } from '../../shared/doc-kind'
+import { openEngineDoc, relayoutEpub, type EngineDoc } from './open'
+import { readOutline, writeOutline } from './outline'
+import { searchPages } from './search'
+import { reflowableToPdf } from './reflow-to-pdf'
 
-interface DocState {
-  doc: mupdf.PDFDocument
+interface DocState extends EngineDoc {
   path: string | null
   /** 페이지 구조 변경 시 비워야 하는 캐시 */
   stCache: Map<number, mupdf.StructuredText>
@@ -27,8 +32,28 @@ function requireState(docId: number): DocState {
   return st
 }
 
-function requireDoc(docId: number): mupdf.PDFDocument {
+/** 읽기 연산용 — PDF·EPUB 공통 */
+function requireAny(docId: number): mupdf.Document {
   return requireState(docId).doc
+}
+
+/** 편집 연산용 — EPUB(읽기 전용)이면 거부 */
+function requireDoc(docId: number): mupdf.PDFDocument {
+  const st = requireState(docId)
+  if (!st.pdf) throw new Error('EPUB은 읽기 전용입니다 — PDF로 변환한 뒤 편집하세요')
+  return st.pdf
+}
+
+function writeAtomic(path: string, bytes: Uint8Array): void {
+  const tmp = join(dirname(path), `.${basename(path)}.icepdf-tmp`)
+  writeFileSync(tmp, bytes)
+  renameSync(tmp, path)
+}
+
+/** EPUB을 현재 레이아웃 그대로 PDF 바이트로 (변환 저장·Markdown/한글/이미지 내보내기 공용) */
+function epubToPdfBytes(st: DocState): Uint8Array {
+  const title = st.doc.getMetaData('info:Title') || (st.path ? basename(st.path).replace(/\.epub$/i, '') : '')
+  return reflowableToPdf(st.doc, title)
 }
 
 function invalidate(docId: number): void {
@@ -53,8 +78,9 @@ function mutate<T>(docId: number, name: string, fn: () => T): T {
 }
 
 function undoState(docId: number): { canUndo: boolean; canRedo: boolean } {
-  const doc = requireDoc(docId)
-  return { canUndo: doc.canUndo(), canRedo: doc.canRedo() }
+  const pdf = requireState(docId).pdf
+  if (!pdf) return { canUndo: false, canRedo: false }
+  return { canUndo: pdf.canUndo(), canRedo: pdf.canRedo() }
 }
 
 function getStructuredText(docId: number, page: number): mupdf.StructuredText {
@@ -66,72 +92,28 @@ function getStructuredText(docId: number, page: number): mupdf.StructuredText {
   return text
 }
 
-// ── 책갈피 ──
-
-interface MupdfOutlineNode {
-  title?: string
-  uri?: string
-  page?: number
-  down?: MupdfOutlineNode[]
-}
-
-function readOutline(doc: mupdf.PDFDocument): BookmarkItem[] {
-  const walk = (items: MupdfOutlineNode[] | undefined): BookmarkItem[] =>
-    (items ?? []).map((it) => ({
-      title: it.title ?? '(제목 없음)',
-      page: it.page ?? (it.uri ? Math.max(0, doc.resolveLink(it.uri)) : 0),
-      children: walk(it.down)
-    }))
-  return walk((doc.loadOutline() as MupdfOutlineNode[] | null) ?? undefined)
-}
-
-function writeOutline(docId: number, items: BookmarkItem[]): void {
-  const doc = requireDoc(docId)
-  const it = doc.outlineIterator()
-  while (it.item()) it.delete()
-  const insertLevel = (nodes: BookmarkItem[]): void => {
-    for (const node of nodes) {
-      it.insert({
-        title: node.title,
-        open: false,
-        uri: doc.formatLinkURI({
-          type: 'XYZ',
-          chapter: 0,
-          page: Math.min(node.page, doc.countPages() - 1),
-          x: 0,
-          y: 0,
-          width: 0,
-          height: 0,
-          zoom: 0
-        })
-      })
-      if (node.children.length) {
-        it.prev()
-        it.down()
-        insertLevel(node.children)
-        it.up()
-        it.next()
-      }
-    }
-  }
-  insertLevel(items)
-}
-
 function docInfo(docId: number): DocInfo {
   const st = requireState(docId)
   const doc = st.doc
   const pageCount = doc.countPages()
   const pages = []
-  for (let i = 0; i < pageCount; i++) {
-    const [x0, y0, x1, y1] = doc.loadPage(i).getBounds()
-    pages.push({ width: x1 - x0, height: y1 - y0 })
+  if (st.kind === 'epub') {
+    // 리플로우 문서는 모든 쪽이 레이아웃 크기 — 쪽마다 loadPage 하지 않는다(큰 책에서 느림)
+    for (let i = 0; i < pageCount; i++) pages.push({ width: EPUB_PAGE.width, height: EPUB_PAGE.height })
+  } else {
+    for (let i = 0; i < pageCount; i++) {
+      const [x0, y0, x1, y1] = doc.loadPage(i).getBounds()
+      pages.push({ width: x1 - x0, height: y1 - y0 })
+    }
   }
   return {
     filePath: st.path,
     pageCount,
     pages,
     outline: readOutline(doc),
-    title: st.path ? basename(st.path) : '제목 없음'
+    title: st.path ? basename(st.path) : '제목 없음',
+    kind: st.kind,
+    fontSize: st.fontSize
   }
 }
 
@@ -140,10 +122,8 @@ function docInfo(docId: number): DocInfo {
 const ops: Record<string, (docId: number, args: any) => unknown> = {
   open(docId, { path }: { path: string }) {
     docs.get(docId)?.doc.destroy?.()
-    const buf = readFileSync(path)
-    const doc = mupdf.Document.openDocument(buf, 'application/pdf') as mupdf.PDFDocument
-    doc.enableJournal() // Ctrl+Z/Ctrl+Shift+Z 되돌리기/다시하기
-    docs.set(docId, { doc, path, stCache: new Map() })
+    const opened = openEngineDoc(path, readFileSync(path))
+    docs.set(docId, { ...opened, path, stCache: new Map() })
     return docInfo(docId)
   },
 
@@ -151,8 +131,23 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
     return docInfo(docId)
   },
 
+  setFontSize(docId, { size }: { size: number }) {
+    const st = requireState(docId)
+    if (st.kind !== 'epub') throw new Error('글자 크기는 EPUB에서만 바꿀 수 있습니다')
+    st.fontSize = relayoutEpub(st.doc, size)
+    invalidate(docId)
+    return docInfo(docId)
+  },
+
+  exportPdf(docId, { path }: { path: string }) {
+    const st = requireState(docId)
+    if (st.kind !== 'epub') throw new Error('PDF 변환은 EPUB 문서에서만 사용할 수 있습니다')
+    writeAtomic(path, epubToPdfBytes(st))
+    return { path, pageCount: st.doc.countPages() }
+  },
+
   render(docId, { page, scale }: { page: number; scale: number }) {
-    const p = requireDoc(docId).loadPage(page)
+    const p = requireAny(docId).loadPage(page)
     const pix = p.toPixmap(mupdf.Matrix.scale(scale, scale), mupdf.ColorSpace.DeviceRGB, false, true)
     const png = pix.asPNG()
     const result = { png: png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength), width: pix.getWidth(), height: pix.getHeight() }
@@ -167,17 +162,8 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
     return { quads, text }
   },
 
-  search(docId, { needle, maxHits }: { needle: string; maxHits: number }) {
-    const doc = requireDoc(docId)
-    const hits: { page: number; quads: Quad[] }[] = []
-    for (let i = 0; i < doc.countPages() && hits.length < maxHits; i++) {
-      const found = getStructuredText(docId, i).search(needle) as unknown as Quad[][]
-      for (const quads of found) {
-        hits.push({ page: i, quads })
-        if (hits.length >= maxHits) break
-      }
-    }
-    return hits
+  search(docId, { needle, from, to, maxHits }: { needle: string; from: number; to: number; maxHits: number }) {
+    return searchPages(requireAny(docId), needle, from, to, maxHits)
   },
 
   addHighlight(docId, { page, quads, color, opacity }: { page: number; quads: Quad[]; color: [number, number, number]; opacity: number }) {
@@ -237,7 +223,9 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
   },
 
   listAnnots(docId, { page }: { page: number }) {
-    const p = requireDoc(docId).loadPage(page)
+    const pdf = requireState(docId).pdf
+    if (!pdf) return [] // EPUB에는 주석이 없다
+    const p = pdf.loadPage(page)
     return p.getAnnotations().map((a, index) => ({
       index,
       type: a.getType(),
@@ -246,7 +234,7 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
   },
 
   getLinks(docId, { page }: { page: number }): LinkInfo[] {
-    const doc = requireDoc(docId)
+    const doc = requireAny(docId)
     const p = doc.loadPage(page)
     return p.getLinks().map((l) => {
       const uri = l.getURI()
@@ -267,7 +255,9 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
   },
 
   hitAnnot(docId, { page, x, y, types }: { page: number; x: number; y: number; types?: string[] }) {
-    const p = requireDoc(docId).loadPage(page)
+    const pdf = requireState(docId).pdf
+    if (!pdf) return null // EPUB 클릭은 개체 선택 없음
+    const p = pdf.loadPage(page)
     const annots = p.getAnnotations()
     // 위에 그려진 주석이 우선 — 역순 탐색
     for (let i = annots.length - 1; i >= 0; i--) {
@@ -330,7 +320,7 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
 
   setOutline(docId, { items }: { items: BookmarkItem[] }) {
     return mutate(docId, 'bookmark', () => {
-      writeOutline(docId, items)
+      writeOutline(requireDoc(docId), items)
       return docInfo(docId)
     })
   },
@@ -381,15 +371,15 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
   },
 
   undo(docId) {
-    const doc = requireDoc(docId)
-    if (doc.canUndo()) doc.undo()
+    const pdf = requireState(docId).pdf
+    if (pdf?.canUndo()) pdf.undo()
     invalidate(docId)
     return { info: docInfo(docId), ...undoState(docId) }
   },
 
   redo(docId) {
-    const doc = requireDoc(docId)
-    if (doc.canRedo()) doc.redo()
+    const pdf = requireState(docId).pdf
+    if (pdf?.canRedo()) pdf.redo()
     invalidate(docId)
     return { info: docInfo(docId), ...undoState(docId) }
   },
@@ -400,17 +390,15 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
 
   save(docId, { path }: { path: string }) {
     const st = requireState(docId)
-    const buf = st.doc.saveToBuffer('garbage=compact')
-    const bytes = buf.asUint8Array()
-    const tmp = join(dirname(path), `.${basename(path)}.icepdf-tmp`)
-    writeFileSync(tmp, bytes)
-    renameSync(tmp, path)
+    writeAtomic(path, requireDoc(docId).saveToBuffer('garbage=compact').asUint8Array())
     st.path = path
     return { path }
   },
 
+  /** 변환(kordoc)·이미지 내보내기용 PDF 바이트 — EPUB은 현재 레이아웃을 PDF로 구워서 준다 */
   getPdfBuffer(docId) {
-    const bytes = requireDoc(docId).saveToBuffer('garbage=compact').asUint8Array()
+    const st = requireState(docId)
+    const bytes = st.pdf ? st.pdf.saveToBuffer('garbage=compact').asUint8Array() : epubToPdfBytes(st)
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
   },
 

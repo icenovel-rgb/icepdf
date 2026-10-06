@@ -23,6 +23,7 @@ function Thumb({
   const activeDocId = useStore((s) => s.activeDocId)
   const current = useStore((s) => s.currentPage === page)
   const gotoPage = useStore((s) => s.gotoPage)
+  const readOnly = useStore((s) => s.info?.kind === 'epub')
   const url = usePageImage(activeDocId, page, scale, epoch, true, 'thumb')
 
   return (
@@ -32,7 +33,8 @@ function Thumb({
       onClick={() => gotoPage(page)}
       onContextMenu={(e) => {
         e.preventDefault()
-        onMenu({ x: e.clientX, y: e.clientY, page })
+        // 쪽 삽입·삭제 메뉴 — 읽기 전용(EPUB)에서는 띄우지 않는다
+        if (!readOnly) onMenu({ x: e.clientX, y: e.clientY, page })
       }}
     >
       {url ? <img src={url} width={thumbW} draggable={false} alt="" /> : <div className="thumb-empty" style={{ width: thumbW, height: height - LABEL_H }} />}

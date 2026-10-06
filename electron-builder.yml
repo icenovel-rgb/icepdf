@@ -23,6 +23,11 @@ fileAssociations:
     description: PDF 문서
     icon: build/icon.ico
     role: Editor
+  - ext: epub
+    name: EPUB 전자책
+    description: EPUB 전자책
+    icon: build/icon.ico
+    role: Viewer
 nsis:
   oneClick: true
   perMachine: false

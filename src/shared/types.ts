@@ -1,4 +1,5 @@
 /** 렌더러·메인·워커가 공유하는 타입. 좌표는 전부 fitz 공간(좌상단 원점, y 아래, 72dpi 포인트). */
+import type { DocKind } from './doc-kind'
 
 export interface PageInfo {
   width: number
@@ -17,6 +18,10 @@ export interface DocInfo {
   pages: PageInfo[]
   outline: BookmarkItem[]
   title: string
+  /** pdf=편집 가능, epub=리플로우 읽기 전용 */
+  kind: DocKind
+  /** EPUB 본문 글자 크기(pt). PDF는 null */
+  fontSize: number | null
 }
 
 /** 사각형 [x0, y0, x1, y1] */
@@ -24,6 +29,12 @@ export type Rect = [number, number, number, number]
 
 /** mupdf quad: [ulx, uly, urx, ury, llx, lly, lrx, lry] */
 export type Quad = number[]
+
+/** 찾기 결과 한 건 — 줄을 넘는 결과는 쿼드가 여러 개 */
+export interface SearchHit {
+  page: number
+  quads: Quad[]
+}
 
 export interface SelectionResult {
   quads: Quad[]
@@ -74,7 +85,12 @@ export interface EngineOps {
     args: { page: number; ax: number; ay: number; bx: number; by: number }
     result: SelectionResult
   }
-  search: { args: { needle: string; maxHits: number }; result: { page: number; quads: Quad[] }[] }
+  /** [from, to) 쪽 구간만 검색 — 렌더러가 구간을 나눠 호출해 큰 문서에서도 렌더가 멈추지 않게 한다 */
+  search: { args: { needle: string; from: number; to: number; maxHits: number }; result: { hits: SearchHit[] } }
+  /** EPUB 글자 크기 변경 → 다시 레이아웃 */
+  setFontSize: { args: { size: number }; result: DocInfo }
+  /** EPUB을 현재 레이아웃 그대로 PDF 파일로 변환 저장 */
+  exportPdf: { args: { path: string }; result: { path: string; pageCount: number } }
   addHighlight: {
     args: { page: number; quads: Quad[]; color: [number, number, number]; opacity: number }
     result: { count: number }
@@ -111,8 +127,14 @@ export type MenuAction =
   | 'save'
   | 'saveAs'
   | 'print'
+  | 'convertToPdf'
   | 'undo'
   | 'redo'
+  | 'find'
+  | 'findNext'
+  | 'findPrev'
+  | 'epubFontUp'
+  | 'epubFontDown'
   | 'exportMarkdown'
   | 'exportHwpx'
   | 'exportImages'

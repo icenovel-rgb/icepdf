@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore, type SelectedImage } from '../state/store'
 import { usePageImage, pageRenderScale } from '../lib/images'
 import { eng } from '../lib/engine'
+import { hitsForPage } from '../lib/find'
 import PageCanvas from './PageCanvas'
 import {
   applyTextResize,
@@ -45,6 +46,8 @@ function norm(a: number, b: number): [number, number] {
 }
 
 const ROT_HANDLE_OFFSET = 26 // px
+/** 다른 문서의 찾기 결과일 때 쓰는 고정 빈 배열 (셀렉터가 매번 새 배열을 내면 무한 리렌더) */
+const NO_HITS: never[] = []
 
 export default function PageView({ page, visible, scale }: Props): React.JSX.Element {
   const info = useStore((s) => s.info)
@@ -63,6 +66,9 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
   const ocrWords = useStore((s) => s.ocrLayers[page])
   const panMode = useStore((s) => s.panMode)
   const set = useStore((s) => s.set)
+  const findHits = useStore((s) => (s.findDocId === s.activeDocId ? s.findHits : NO_HITS))
+  const findIndex = useStore((s) => s.findIndex)
+  const pageHits = useMemo(() => hitsForPage(findHits, page), [findHits, page])
 
   const ref = useRef<HTMLDivElement>(null)
   const drag = useRef<
@@ -450,6 +456,16 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
             </span>
           ))}
         </div>
+      )}
+
+      {pageHits.map((h) =>
+        h.quads.map((q, qi) => (
+          <div
+            key={`f${h.index}-${qi}`}
+            className={`find-hit${h.index === findIndex ? ' current' : ''}`}
+            style={quadToBox(q, zoom)}
+          />
+        ))
       )}
 
       {selBoxes.map((b, i) => (

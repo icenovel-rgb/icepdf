@@ -10,9 +10,14 @@ import BookmarkPanel from './components/BookmarkPanel'
 import StatusBar from './components/StatusBar'
 import SupportModal from './components/SupportModal'
 import PrintModal from './components/PrintModal'
+import FindBar from './components/FindBar'
+import { closeFind, findStep, installFindAutoRerun, openFind } from './lib/finder'
+import { EPUB_FONT, isOpenableDocPath } from '../../shared/doc-kind'
 import {
   addBookmarkAtCurrentPage,
+  changeEpubFontSize,
   closeTabById,
+  convertEpubToPdf,
   copySelection,
   deleteSelectedOrPage,
   deselectImage,
@@ -68,6 +73,24 @@ function handleMenuAction(action: MenuAction): void {
       break
     case 'print':
       if (s.info) s.set({ showPrint: true })
+      break
+    case 'convertToPdf':
+      void convertEpubToPdf()
+      break
+    case 'find':
+      if (!s.showPrint && !s.showSupport) openFind()
+      break
+    case 'findNext':
+      if (!s.showPrint && !s.showSupport) findStep(1)
+      break
+    case 'findPrev':
+      if (!s.showPrint && !s.showSupport) findStep(-1)
+      break
+    case 'epubFontUp':
+      void changeEpubFontSize(EPUB_FONT.step)
+      break
+    case 'epubFontDown':
+      void changeEpubFontSize(-EPUB_FONT.step)
       break
     case 'undo':
       void undo()
@@ -169,6 +192,9 @@ export default function App(): React.JSX.Element {
     window.__icepdf = { actions, state: () => useStore.getState() }
   }, [])
 
+  // 찾기 막대가 열린 채 문서가 바뀌면(탭 전환·편집·EPUB 글자 크기) 자동 재검색
+  useEffect(() => installFindAutoRerun(), [])
+
   useEffect(() => {
     const title = info ? `${dirty ? '● ' : ''}${info.title} — ICEPDF` : 'ICEPDF'
     void window.icepdf.setTitle(title)
@@ -240,6 +266,22 @@ export default function App(): React.JSX.Element {
         refreshPages()
         return
       }
+      // 찾기도 입력 포커스 중에 동작 (찾기 입력칸에서 Ctrl+F = 다시 전체 선택).
+      // e.code로 판별 — 한글 입력 상태에서는 e.key가 'ㄹ'이 된다.
+      // 모달(인쇄·후원)이 떠 있으면 무시 — 뒤에서 찾기 막대가 포커스를 가져가 모달 입력이 뒤 문서로 새는 것 방지
+      const modalOpen = s.showPrint || s.showSupport
+      const isFind = e.ctrlKey && !e.altKey && !e.shiftKey && e.code === 'KeyF'
+      if ((isFind || e.key === 'F3') && modalOpen) return
+      if (isFind) {
+        e.preventDefault()
+        openFind()
+        return
+      }
+      if (e.key === 'F3') {
+        e.preventDefault()
+        findStep(e.shiftKey ? -1 : 1)
+        return
+      }
       if (inInput) return
       // 되돌리기 / 다시하기 (텍스트 편집 중에는 textarea가 stopPropagation → 네이티브 실행취소)
       if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
@@ -268,7 +310,8 @@ export default function App(): React.JSX.Element {
       } else if (e.key === 'Delete' && s.info) {
         void deleteSelectedOrPage()
       } else if (e.key === 'Escape') {
-        if (s.fullscreen || s.chromeHidden) exitChrome()
+        if (s.findOpen) closeFind()
+        else if (s.fullscreen || s.chromeHidden) exitChrome()
         else if (s.selectedImage) deselectImage()
         else s.set({ selection: null, pendingImage: null, tool: s.tool === 'image' ? 'select' : s.tool })
       } else if ((e.key === 'PageDown' || (slide && (e.key === 'ArrowRight' || e.key === 'ArrowDown'))) && s.info) {
@@ -287,15 +330,15 @@ export default function App(): React.JSX.Element {
   const isFileDrag = (e: React.DragEvent): boolean =>
     Array.from(e.dataTransfer?.types ?? []).includes('Files')
 
-  // 드래그드롭으로 PDF 열기 (#1)
+  // 드래그드롭으로 PDF·EPUB 열기 (#1)
   const onDrop = (e: React.DragEvent): void => {
     if (!isFileDrag(e)) return
     e.preventDefault()
     setDragOver(false)
     const file = e.dataTransfer.files[0]
     if (!file) return
-    if (!/\.pdf$/i.test(file.name)) {
-      set({ toast: 'PDF 파일만 열 수 있습니다' })
+    if (!isOpenableDocPath(file.name)) {
+      useStore.getState().showToast('PDF 또는 EPUB 파일만 열 수 있습니다')
       return
     }
     const path = window.icepdf.pathForFile(file)
@@ -323,7 +366,9 @@ export default function App(): React.JSX.Element {
             <div className="sidebar" style={{ width: sidebarWidth }}>
               <div className="sidebar-tabs">
                 <button className={sidebar === 'thumbnails' ? 'active' : ''} onClick={() => set({ sidebar: 'thumbnails' })}>페이지</button>
-                <button className={sidebar === 'bookmarks' ? 'active' : ''} onClick={() => set({ sidebar: 'bookmarks' })}>책갈피</button>
+                <button className={sidebar === 'bookmarks' ? 'active' : ''} onClick={() => set({ sidebar: 'bookmarks' })}>
+                  {info.kind === 'epub' ? '목차' : '책갈피'}
+                </button>
               </div>
               <div className="sidebar-body">{sidebar === 'thumbnails' ? <ThumbnailPanel /> : <BookmarkPanel />}</div>
             </div>
@@ -338,12 +383,13 @@ export default function App(): React.JSX.Element {
           </>
         )}
         <div className="content">
+          {info && <FindBar />}
           {!info ? (
             <div className="welcome">
               <h1>ICEPDF</h1>
-              <p>PDF 보기 · 편집 · 한글(HWPX)/Markdown 변환</p>
-              <button onClick={() => void openFile()}>📂 PDF 열기 (Ctrl+O)</button>
-              <p className="welcome-hint">또는 이 창에 PDF 파일을 끌어다 놓으세요</p>
+              <p>PDF 보기 · 편집 · 한글(HWPX)/Markdown 변환 · EPUB 읽기/PDF 변환</p>
+              <button onClick={() => void openFile()}>📂 PDF·EPUB 열기 (Ctrl+O)</button>
+              <p className="welcome-hint">또는 이 창에 PDF·EPUB 파일을 끌어다 놓으세요</p>
             </div>
           ) : viewMode === 'grid' ? (
             <GridView />
@@ -360,7 +406,7 @@ export default function App(): React.JSX.Element {
           <div className="busy-box">{busy}</div>
         </div>
       )}
-      {dragOver && <div className="drop-overlay">여기에 PDF를 놓으세요</div>}
+      {dragOver && <div className="drop-overlay">여기에 PDF·EPUB을 놓으세요</div>}
       <SupportModal />
       <PrintModal />
       {toast && <div className="toast">{toast}</div>}

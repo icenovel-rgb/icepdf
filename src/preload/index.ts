@@ -13,8 +13,9 @@ const api = {
   closeDoc(docId: number): Promise<null> {
     return ipcRenderer.invoke('doc:close', docId)
   },
-  openPdfDialog(): Promise<string | null> {
-    return ipcRenderer.invoke('dialog:openPdf')
+  /** includeEpub=true면 PDF·EPUB 모두 (문서 열기), false면 PDF만 (쪽 삽입) */
+  openPdfDialog(includeEpub = false): Promise<string | null> {
+    return ipcRenderer.invoke('dialog:openPdf', includeEpub)
   },
   openImageDialog(): Promise<{ path: string; data: ArrayBuffer } | null> {
     return ipcRenderer.invoke('dialog:openImage')

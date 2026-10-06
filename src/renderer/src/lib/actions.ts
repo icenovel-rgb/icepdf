@@ -11,9 +11,31 @@ import {
   registerSessionImage
 } from './session-images'
 import type { BookmarkItem, DocInfo, Rect } from '../../../shared/types'
+import {
+  EPUB_FONT,
+  clampEpubFontSize,
+  docBaseName,
+  isReadOnlyKind,
+  mapPageAfterRelayout
+} from '../../../shared/doc-kind'
 
 const api = (): typeof window.icepdf => window.icepdf
 const store = (): ReturnType<typeof useStore.getState> => useStore.getState()
+
+/** 이보다 오래 걸리는 작업만 진행 표시를 띄운다 (ms) */
+const BUSY_DELAY = 300
+
+/** 활성 문서가 읽기 전용(EPUB)인지 */
+export function isReadOnly(): boolean {
+  return isReadOnlyKind(store().info?.kind)
+}
+
+/** 편집 액션 진입부 가드 — 읽기 전용 문서면 안내하고 false (단축키·메뉴로 들어오는 경로까지 막는다) */
+function ensureEditable(): boolean {
+  if (!isReadOnly()) return true
+  store().showToast('EPUB은 읽기 전용입니다 — PDF로 변환(Ctrl+S)하면 편집할 수 있습니다')
+  return false
+}
 
 /** 페이지 이미지에 영향 없는 편집(주석 변형 등) 후 갱신 — selectedImage 유지 */
 function touch(): void {
@@ -52,7 +74,7 @@ function afterUndoRedo(r: { info: DocInfo; canUndo: boolean; canRedo: boolean })
 
 export async function undo(): Promise<void> {
   const s = store()
-  if (!s.info) return
+  if (!s.info || isReadOnly()) return
   try {
     afterUndoRedo(await eng('undo', {}))
   } catch (err) {
@@ -62,7 +84,7 @@ export async function undo(): Promise<void> {
 
 export async function redo(): Promise<void> {
   const s = store()
-  if (!s.info) return
+  if (!s.info || isReadOnly()) return
   try {
     afterUndoRedo(await eng('redo', {}))
   } catch (err) {
@@ -70,9 +92,9 @@ export async function redo(): Promise<void> {
   }
 }
 
-/** PDF를 새 탭으로 연다 (윈도우 탐색기 탭처럼 — 기존 탭은 유지). */
+/** PDF·EPUB을 새 탭으로 연다 (윈도우 탐색기 탭처럼 — 기존 탭은 유지). */
 export async function openFile(path?: string): Promise<void> {
-  const target = path ?? (await api().openPdfDialog())
+  const target = path ?? (await api().openPdfDialog(true))
   if (!target) return
   const s = store()
   s.set({ busy: '문서 여는 중...' })
@@ -119,6 +141,8 @@ export async function closeTabById(tabId: number): Promise<void> {
 export async function saveFile(forceAsk = false): Promise<void> {
   const s = store()
   if (!s.info) return
+  // EPUB은 원본을 덮어쓰지 않는다 — 저장 = PDF로 변환해 저장
+  if (isReadOnly()) return convertEpubToPdf()
   let path = s.info.filePath
   if (forceAsk || !path) {
     path = await api().saveFileDialog({
@@ -160,7 +184,7 @@ export async function saveAllDirty(): Promise<boolean> {
     if (!path) {
       path = await api().saveFileDialog({
         title: 'PDF 저장',
-        defaultPath: `${(info.title || '문서').replace(/\.pdf$/i, '')}.pdf`,
+        defaultPath: `${docBaseName(info.title)}.pdf`,
         ext: 'pdf',
         extName: 'PDF 문서'
       })
@@ -205,7 +229,7 @@ export async function exportDoc(mode: 'markdown' | 'hwpx'): Promise<void> {
     )
     if (!ok) return
   }
-  const base = (s.info.title || '문서').replace(/\.pdf$/i, '')
+  const base = docBaseName(s.info.title)
   const ext = mode === 'markdown' ? 'md' : 'hwpx'
   const outPath = await api().saveFileDialog({
     title: mode === 'markdown' ? 'Markdown으로 내보내기' : '한글 문서(HWPX)로 내보내기',
@@ -224,6 +248,82 @@ export async function exportDoc(mode: 'markdown' | 'hwpx'): Promise<void> {
   } catch (err) {
     s.showToast(`변환 실패: ${err instanceof Error ? err.message : err}`)
   } finally {
+    store().set({ busy: null })
+  }
+}
+
+/**
+ * EPUB → PDF 변환 저장. 현재 글자 크기의 쪽 나눔 그대로 굽고(텍스트·목차·링크 유지),
+ * 끝나면 변환된 PDF를 새 탭에서 열어 편집할지 묻는다.
+ */
+export async function convertEpubToPdf(): Promise<void> {
+  const s = store()
+  const info = s.info
+  if (!info) return
+  if (info.kind !== 'epub') {
+    s.showToast('PDF 변환은 EPUB 문서에서 사용할 수 있습니다')
+    return
+  }
+  const path = await api().saveFileDialog({
+    title: 'PDF로 변환하여 저장',
+    defaultPath: info.filePath ? info.filePath.replace(/\.epub$/i, '.pdf') : `${docBaseName(info.title)}.pdf`,
+    ext: 'pdf',
+    extName: 'PDF 문서'
+  })
+  if (!path) return
+  s.set({ busy: 'PDF로 변환 중...' })
+  let result: { path: string; pageCount: number }
+  try {
+    result = await eng('exportPdf', { path })
+  } catch (err) {
+    s.showToast(`PDF 변환 실패: ${err instanceof Error ? err.message : err}`)
+    return
+  } finally {
+    store().set({ busy: null })
+  }
+  const open = await api().confirm(
+    `PDF로 변환했습니다 (${result.pageCount}쪽)`,
+    `${result.path}\n\n현재 글자 크기(${info.fontSize ?? EPUB_FONT.default}pt) 기준으로 쪽이 나뉘었습니다.\n변환된 PDF를 새 탭에서 열어 편집하시겠습니까?`
+  )
+  if (open) await openFile(result.path)
+  else s.showToast(`PDF로 저장했습니다: ${result.path}`)
+}
+
+/** 재레이아웃 중인 문서 — 연타 시 같은 크기 요청이 겹치지 않게 진행 중엔 무시 */
+const relayingDocs = new Set<number>()
+
+/**
+ * EPUB 글자 크기 변경 → 엔진이 다시 쪽을 나눈다. 쪽 수가 바뀌므로
+ * 렌더 캐시를 비우고 읽던 위치를 비율로 옮긴다(mapPageAfterRelayout).
+ * 결과는 요청한 문서(docId)에 반영 — 그 사이 탭을 바꿔도 다른 탭을 덮지 않는다(updateDoc).
+ */
+export async function changeEpubFontSize(delta: number): Promise<void> {
+  const s = store()
+  const info = s.info
+  const docId = s.activeDocId
+  if (!info || info.kind !== 'epub' || info.fontSize == null || relayingDocs.has(docId)) return
+  const size = clampEpubFontSize(info.fontSize + delta)
+  if (size === info.fontSize) {
+    s.showToast(`글자 크기는 ${EPUB_FONT.min}~${EPUB_FONT.max}pt 사이에서 바꿀 수 있습니다`)
+    return
+  }
+  const oldPage = s.currentPage
+  const oldCount = info.pageCount
+  relayingDocs.add(docId)
+  // 큰 책은 다시 쪽 나누는 데 시간이 걸린다 — 짧으면 깜빡이지 않게 늦게 띄운다
+  const busyTimer = setTimeout(() => store().set({ busy: '글자 크기에 맞춰 쪽을 다시 나누는 중...' }), BUSY_DELAY)
+  try {
+    const next = await api().engine(docId, 'setFontSize', { size })
+    clearDocImages(docId)
+    const page = mapPageAfterRelayout(oldPage, oldCount, next.pageCount)
+    store().updateDoc(docId, (slice) => ({ info: next, epoch: slice.epoch + 1, selection: null, currentPage: page }))
+    // 비활성 탭이면 돌아올 때 switchTab이 currentPage로 스크롤한다
+    if (store().activeDocId === docId) store().gotoPage(page)
+  } catch (err) {
+    s.showToast(`글자 크기 변경 실패: ${err instanceof Error ? err.message : err}`)
+  } finally {
+    relayingDocs.delete(docId)
+    clearTimeout(busyTimer)
     store().set({ busy: null })
   }
 }
@@ -248,7 +348,7 @@ export async function exportImagesToFolder(): Promise<void> {
 /** Del 키: 선택 이미지가 있으면 삭제, 없으면 현재 페이지 삭제 (#V) */
 export async function deleteSelectedOrPage(): Promise<void> {
   const s = store()
-  if (!s.info) return
+  if (!s.info || !ensureEditable()) return
   const sel = s.selectedImage
   if (sel) {
     try {
@@ -267,7 +367,7 @@ export async function deleteSelectedOrPage(): Promise<void> {
 
 export async function deletePageAt(page: number): Promise<void> {
   const s = store()
-  if (!s.info) return
+  if (!s.info || !ensureEditable()) return
   const ok = await api().confirm(`${page + 1}쪽을 삭제할까요?`, '이 작업은 저장 전까지 되돌릴 수 없습니다.')
   if (!ok) return
   try {
@@ -282,7 +382,7 @@ export async function deletePageAt(page: number): Promise<void> {
 
 export async function insertBlankAt(at: number): Promise<void> {
   const s = store()
-  if (!s.info) return
+  if (!s.info || !ensureEditable()) return
   try {
     s.applyEdit(await eng('insertBlank', { at }))
     clearSessionImages(store().activeDocId)
@@ -295,7 +395,7 @@ export async function insertBlankAt(at: number): Promise<void> {
 
 export async function insertFromPdfAt(at: number): Promise<void> {
   const s = store()
-  if (!s.info) return
+  if (!s.info || !ensureEditable()) return
   const path = await api().openPdfDialog()
   if (!path) return
   s.set({ busy: 'PDF 페이지 삽입 중...' })
@@ -319,7 +419,7 @@ function hexToRgb(hex: string): [number, number, number] {
 
 export async function highlightSelection(): Promise<void> {
   const s = store()
-  if (!s.selection || !s.selection.quads.length) return
+  if (!s.selection || !s.selection.quads.length || !ensureEditable()) return
   try {
     await eng('addHighlight', {
       page: s.selection.page,
@@ -337,7 +437,7 @@ export async function highlightSelection(): Promise<void> {
 /** 지우개: 클릭 위치의 형광펜/주석 삭제 (#7) */
 export async function eraseAt(page: number, x: number, y: number): Promise<boolean> {
   const s = store()
-  if (!s.info) return false
+  if (!s.info || !ensureEditable()) return false
   try {
     const hit = await eng('hitAnnot', { page, x, y, types: ['Square', 'Highlight', 'Stamp'] })
     if (!hit) return false
@@ -353,7 +453,7 @@ export async function eraseAt(page: number, x: number, y: number): Promise<boole
 
 export async function armImageTool(): Promise<void> {
   const s = store()
-  if (!s.info) return
+  if (!s.info || !ensureEditable()) return
   const img = await api().openImageDialog()
   if (!img) return
   const { width, height } = await imageNaturalSize(img.data)
@@ -385,6 +485,7 @@ function imageNeedsRerender(sel: SelectedImage): boolean {
 export async function placeImage(page: number, rect: Rect): Promise<void> {
   const s = store()
   const pending = s.pendingImage
+  if (!ensureEditable()) return
   if (!pending) return
   try {
     const { index } = await eng('addImage', { page, rect, png: pending.data.slice(0) })
@@ -417,7 +518,7 @@ export async function placeImage(page: number, rect: Rect): Promise<void> {
  */
 export async function placeText(page: number, x: number, y: number, text: string, style: TextStyle): Promise<void> {
   const s = store()
-  if (!s.info || !text.trim()) return
+  if (!s.info || !text.trim() || !ensureEditable()) return
   try {
     const { png, widthPt, heightPt } = await renderTextToPng(text, style)
     const pageInfo = s.info.pages[page]
@@ -630,7 +731,7 @@ export const sendToBack = (): Promise<void> => reorderSelected('back')
 
 export async function setOutline(items: BookmarkItem[]): Promise<void> {
   const s = store()
-  if (!s.info) return
+  if (!s.info || !ensureEditable()) return
   try {
     const info = await eng('setOutline', { items })
     s.set({ info, dirty: true })
@@ -642,7 +743,7 @@ export async function setOutline(items: BookmarkItem[]): Promise<void> {
 
 export async function addBookmarkAtCurrentPage(): Promise<void> {
   const s = store()
-  if (!s.info) return
+  if (!s.info || !ensureEditable()) return
   const page = s.currentPage
   const items = [...s.info.outline, { title: `${page + 1}쪽 책갈피`, page, children: [] }]
   await setOutline(items)
@@ -653,7 +754,7 @@ export async function addBookmarkAtCurrentPage(): Promise<void> {
 /** OCR → 페이지 위에 선택 가능한 텍스트 레이어 생성 (#III, #h) */
 export async function ocrPages(pages: number[]): Promise<void> {
   const s = store()
-  if (!s.info || !pages.length) return
+  if (!s.info || !pages.length || !ensureEditable()) return
   const ok = await api().confirm(
     'OCR 글자 인식 안내',
     'OCR은 이미지의 디자인과 해상도에 따라 글자가 완벽하게 인식되지 않을 수 있습니다. 결과를 감안하여 활용하세요.\n\n계속하시겠습니까?'

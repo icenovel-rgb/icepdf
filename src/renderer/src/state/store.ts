@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import type { DocInfo, Quad, Rect } from '../../../shared/types'
+import type { DocInfo, Quad, Rect, SearchHit } from '../../../shared/types'
+import type { FindStatus } from '../lib/find'
 
 export type Tool = 'select' | 'highlight' | 'eraser' | 'image' | 'text'
 export type ViewMode = 'scroll' | 'grid' | 'slide'
@@ -68,6 +69,8 @@ export interface DocSlice {
   ocrLayers: Record<number, OcrWord[]>
   epoch: number
   scrollTarget: number | null
+  /** scrollTarget 쪽 안에서 보여줄 y(pt) — 찾기 결과로 이동할 때만, 평소엔 null(쪽 맨 위) */
+  scrollTargetY: number | null
   navSeq: number
   /** 되돌리기/다시하기 가능 여부 (문서별) */
   canUndo: boolean
@@ -85,7 +88,7 @@ export interface Tab {
 const SLICE_KEYS = [
   'info', 'dirty', 'currentPage', 'zoom', 'fitWidthTick', 'fitPageTick', 'viewMode',
   'spread', 'cover', 'tool', 'pendingImage', 'selection', 'selectedImage', 'ocrLayers',
-  'epoch', 'scrollTarget', 'navSeq', 'canUndo', 'canRedo'
+  'epoch', 'scrollTarget', 'scrollTargetY', 'navSeq', 'canUndo', 'canRedo'
 ] as const
 
 const EMPTY_SLICE: DocSlice = {
@@ -105,6 +108,7 @@ const EMPTY_SLICE: DocSlice = {
   ocrLayers: {},
   epoch: 0,
   scrollTarget: null,
+  scrollTargetY: null,
   navSeq: 0,
   canUndo: false,
   canRedo: false
@@ -140,9 +144,29 @@ interface AppState extends DocSlice {
   busy: string | null
   toast: string | null
 
+  // ── 찾기 (Ctrl+F) — 검색어는 탭 전환에도 유지, 결과는 findDocId 문서 것 ──
+  findOpen: boolean
+  findQuery: string
+  findHits: SearchHit[]
+  /** 현재 결과 인덱스 (-1 = 없음) */
+  findIndex: number
+  findDocId: number
+  findStatus: FindStatus
+  /** 결과가 상한(FIND_MAX_HITS)에 걸려 잘렸는지 */
+  findCapped: boolean
+  /** 증가 시 찾기 입력칸에 포커스+전체선택 (이미 열려 있을 때 Ctrl+F) */
+  findFocusTick: number
+
   set: (partial: Partial<AppState>) => void
   applyEdit: (info: DocInfo) => void
   gotoPage: (page: number) => void
+  /** 쪽 안의 특정 y(pt)가 보이도록 이동 — 찾기 결과용 */
+  gotoPageAt: (page: number, y: number) => void
+  /**
+   * 특정 문서의 슬라이스 갱신 — 활성 탭이면 라이브 상태, 아니면 그 탭의 스냅샷(닫힌 문서면 무시).
+   * 비동기 작업이 끝났을 때 그 사이 탭이 바뀌었어도 결과가 엉뚱한 탭에 들어가지 않게 한다.
+   */
+  updateDoc: (docId: number, fn: (slice: DocSlice) => Partial<DocSlice>) => void
   showToast: (message: string) => void
   /** 새 문서를 탭으로 열고 활성화 */
   openTab: (docId: number, info: DocInfo) => void
@@ -194,9 +218,18 @@ export const useStore = create<AppState>((set, get) => ({
   busy: null,
   toast: null,
   scrollTarget: null,
+  scrollTargetY: null,
   navSeq: 0,
   canUndo: false,
   canRedo: false,
+  findOpen: false,
+  findQuery: '',
+  findHits: [],
+  findIndex: -1,
+  findDocId: 0,
+  findStatus: 'idle',
+  findCapped: false,
+  findFocusTick: 0,
 
   set: (partial) => set(partial),
 
@@ -214,7 +247,26 @@ export const useStore = create<AppState>((set, get) => ({
     const info = get().info
     if (!info) return
     const p = Math.max(0, Math.min(info.pageCount - 1, page))
-    set({ scrollTarget: p, currentPage: p, navSeq: get().navSeq + 1 })
+    set({ scrollTarget: p, scrollTargetY: null, currentPage: p, navSeq: get().navSeq + 1 })
+  },
+
+  gotoPageAt: (page, y) => {
+    const info = get().info
+    if (!info) return
+    const p = Math.max(0, Math.min(info.pageCount - 1, page))
+    set({ scrollTarget: p, scrollTargetY: y, currentPage: p, navSeq: get().navSeq + 1 })
+  },
+
+  updateDoc: (docId, fn) => {
+    const s = get()
+    if (s.activeTabId != null && s.activeDocId === docId) {
+      set(fn(sliceOf(s)))
+      return
+    }
+    if (!s.tabs.some((t) => t.docId === docId)) return
+    set({
+      tabs: s.tabs.map((t) => (t.docId === docId ? { ...t, snapshot: { ...t.snapshot, ...fn(t.snapshot) } } : t))
+    })
   },
 
   showToast: (message) => {
@@ -254,6 +306,7 @@ export const useStore = create<AppState>((set, get) => ({
       activeDocId: target.docId,
       ...target.snapshot,
       scrollTarget: target.snapshot.currentPage,
+      scrollTargetY: null,
       navSeq: target.snapshot.navSeq + 1
     })
   },
@@ -281,6 +334,7 @@ export const useStore = create<AppState>((set, get) => ({
       activeDocId: next.docId,
       ...next.snapshot,
       scrollTarget: next.snapshot.currentPage,
+      scrollTargetY: null,
       navSeq: next.snapshot.navSeq + 1
     })
   }

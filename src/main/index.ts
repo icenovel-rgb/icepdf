@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { registerIpc, setInitialFile } from './ipc'
 import { shutdownEngine } from './engine/proxy'
+import { isOpenableDocPath } from '../shared/doc-kind'
 import type { MenuAction } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -15,11 +16,11 @@ function send(action: MenuAction): void {
   mainWindow?.webContents.send('menu:action', action)
 }
 
-/** argv에서 열어야 할 PDF 경로 추출 ('연결 프로그램으로 열기' 시 인자로 전달됨) */
-function pdfPathFromArgv(argv: string[]): string | null {
+/** argv에서 열어야 할 PDF/EPUB 경로 추출 ('연결 프로그램으로 열기' 시 인자로 전달됨) */
+function docPathFromArgv(argv: string[]): string | null {
   for (const arg of argv.slice(1)) {
     if (arg.startsWith('-')) continue
-    if (/\.pdf$/i.test(arg) && existsSync(arg)) return arg
+    if (isOpenableDocPath(arg) && existsSync(arg)) return arg
   }
   return null
 }
@@ -37,7 +38,7 @@ function buildMenu(): void {
     {
       label: '파일(&F)',
       submenu: [
-        { label: '열기...', accelerator: 'Ctrl+O', click: () => send('open') },
+        { label: '열기 (PDF·EPUB)...', accelerator: 'Ctrl+O', click: () => send('open') },
         { label: '새 탭으로 열기...', accelerator: 'Ctrl+T', click: () => send('newTab') },
         { label: '탭 닫기', accelerator: 'Ctrl+W', click: () => send('closeTab') },
         { type: 'separator' },
@@ -51,7 +52,9 @@ function buildMenu(): void {
           submenu: [
             { label: 'Markdown (.md)...', click: () => send('exportMarkdown') },
             { label: '한글 문서 (.hwpx)...', click: () => send('exportHwpx') },
-            { label: '이미지로 내보내기 (폴더)...', click: () => send('exportImages') }
+            { label: '이미지로 내보내기 (폴더)...', click: () => send('exportImages') },
+            { type: 'separator' },
+            { label: 'EPUB → PDF로 변환...', click: () => send('convertToPdf') }
           ]
         },
         { type: 'separator' },
@@ -64,6 +67,11 @@ function buildMenu(): void {
         // 단축키는 렌더러 keydown이 처리(텍스트 편집 중 네이티브 실행취소 보존) → 메뉴엔 표시만
         { label: '실행취소', accelerator: 'CmdOrCtrl+Z', registerAccelerator: false, click: () => send('undo') },
         { label: '다시실행', accelerator: 'CmdOrCtrl+Shift+Z', registerAccelerator: false, click: () => send('redo') },
+        { type: 'separator' },
+        // 찾기도 렌더러 keydown이 처리(입력칸 포커스 중에도 동작 + 더블발화 방지) → 메뉴엔 표시만
+        { label: '찾기...', accelerator: 'CmdOrCtrl+F', registerAccelerator: false, click: () => send('find') },
+        { label: '다음 찾기', accelerator: 'F3', registerAccelerator: false, click: () => send('findNext') },
+        { label: '이전 찾기', accelerator: 'Shift+F3', registerAccelerator: false, click: () => send('findPrev') },
         { type: 'separator' },
         { label: '책갈피 추가', accelerator: 'Ctrl+B', click: () => send('addBookmark') },
         { label: '현재 페이지 OCR', accelerator: 'Ctrl+Shift+O', click: () => send('ocr') },
@@ -83,6 +91,9 @@ function buildMenu(): void {
         { label: '슬라이드 보기 전환', accelerator: 'Ctrl+Shift+P', click: () => send('toggleSlide') },
         { label: '전체 화면 (툴바 숨김)', accelerator: 'Ctrl+L', click: () => send('toggleFullscreen') },
         { label: '사이드바 전환', accelerator: 'F4', click: () => send('toggleSidebar') },
+        { type: 'separator' },
+        { label: 'EPUB 글자 크게', click: () => send('epubFontUp') },
+        { label: 'EPUB 글자 작게', click: () => send('epubFontDown') },
         { type: 'separator' },
         { label: '개발자 도구', accelerator: 'F12', role: 'toggleDevTools' }
       ]
@@ -196,7 +207,7 @@ if (!gotLock) {
   app.quit()
 } else {
   app.on('second-instance', (_e, argv) => {
-    const p = pdfPathFromArgv(argv)
+    const p = docPathFromArgv(argv)
     if (p) openInRenderer(p)
     else if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore()
@@ -212,7 +223,7 @@ if (!gotLock) {
   })
 
   app.whenReady().then(() => {
-    setInitialFile(pdfPathFromArgv(process.argv))
+    setInitialFile(docPathFromArgv(process.argv))
     registerIpc()
     registerWindowIpc()
     buildMenu()

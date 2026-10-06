@@ -108,6 +108,7 @@ input {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  position: relative; /* 찾기 막대(.find-bar) 기준 */
 }
 
 /* ── 사이드바 ── */
@@ -1325,4 +1326,82 @@ input {
 /* 페이지 캔버스 — <img> 대체, 디바이스 픽셀 1:1 고품질 */
 .page-canvas {
   display: block;
+}
+
+/* ── 찾기 (Ctrl+F) ── */
+.find-bar {
+  position: absolute;
+  top: 10px;
+  right: 22px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px 5px 10px;
+  background: #2d2d30;
+  border: 1px solid #555;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  color: #cdd0d6;
+}
+.find-input {
+  width: 220px;
+  height: 26px;
+  background: #1c1d20;
+  border: 1px solid #4a4c52;
+  color: #e2e4e8;
+}
+.find-input:focus {
+  outline: none;
+  border-color: #388bfd;
+}
+.find-input.find-none {
+  border-color: #b62324;
+}
+.find-count {
+  min-width: 64px;
+  padding: 0 4px;
+  text-align: center;
+  color: #9498a0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.find-count.find-none {
+  color: #f0817f;
+}
+.find-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+}
+.find-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+}
+/* 결과 강조 — 전체는 노랑, 현재 결과는 주황+테두리 (텍스트가 비치도록 multiply) */
+.find-hit {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(255, 214, 0, 0.45);
+  mix-blend-mode: multiply;
+  z-index: 3;
+}
+.find-hit.current {
+  background: rgba(255, 128, 0, 0.6);
+  outline: 2px solid #ff7a00;
+  outline-offset: 1px;
+}
+
+/* EPUB 읽기 전용 */
+.sb-epub {
+  color: #7ec8ff;
+}
+.tb-font-size {
+  min-width: 36px;
+  text-align: center;
 }

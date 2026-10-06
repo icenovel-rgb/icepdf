@@ -109,11 +109,19 @@ export function registerIpc(): void {
     return closeDoc(docId)
   })
 
-  ipcMain.handle('dialog:openPdf', async (e) => {
+  // includeEpub: 문서 열기=true(PDF·EPUB), 다른 PDF에서 쪽 삽입=false(PDF만)
+  ipcMain.handle('dialog:openPdf', async (e, includeEpub: boolean) => {
     const win = BrowserWindow.fromWebContents(e.sender)!
+    const filters = includeEpub
+      ? [
+          { name: '문서 (PDF, EPUB)', extensions: ['pdf', 'epub'] },
+          { name: 'PDF 문서', extensions: ['pdf'] },
+          { name: 'EPUB 전자책', extensions: ['epub'] }
+        ]
+      : [{ name: 'PDF 문서', extensions: ['pdf'] }]
     const r = await dialog.showOpenDialog(win, {
-      title: 'PDF 열기',
-      filters: [{ name: 'PDF 문서', extensions: ['pdf'] }],
+      title: includeEpub ? '문서 열기' : 'PDF 열기',
+      filters,
       properties: ['openFile']
     })
     return r.canceled ? null : r.filePaths[0]

@@ -109,10 +109,14 @@ export default function Viewer(): React.JSX.Element {
   useEffect(updateVisible, [info, zoom, rows]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 네비게이션 — navSeq가 바뀔 때마다 목표 페이지의 행으로 스크롤 (동일 페이지 재요청도 발화)
+  // 찾기 결과처럼 쪽 안의 y가 주어지면 그 위치가 화면 위쪽 1/3에 오도록
   useEffect(() => {
-    if (scrollTarget === null || !containerRef.current) return
+    const el = containerRef.current
+    if (scrollTarget === null || !el) return
     const ri = rowOfPage.get(scrollTarget) ?? 0
-    containerRef.current.scrollTo({ top: layout.offsets[ri] - 8 })
+    const y = useStore.getState().scrollTargetY
+    const top = y == null ? layout.offsets[ri] - 8 : layout.offsets[ri] + y * zoom - el.clientHeight / 3
+    el.scrollTo({ top: Math.max(0, top) })
   }, [navSeq]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 폭 맞춤 / 쪽 맞춤

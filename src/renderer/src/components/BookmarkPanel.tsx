@@ -36,6 +36,30 @@ export default function BookmarkPanel(): React.JSX.Element {
 
   if (!info) return <div />
 
+  // EPUB 목차 — 읽기 전용(클릭 이동만). 편집·드래그·이름 변경 없음
+  if (info.kind === 'epub') {
+    return (
+      <div className="bm-panel bm-panel--toc">
+        {tree.length === 0 ? (
+          <p className="bm-empty">이 전자책에는 목차가 없습니다.</p>
+        ) : (
+          flat.map((f) => (
+            <div key={keyOf(f.path)} className="bm-row" style={{ paddingLeft: 8 + f.depth * 16 }}>
+              <span
+                className="bm-title"
+                onClick={() => useStore.getState().gotoPage(f.item.page)}
+                title={`${f.item.page + 1}쪽으로 이동`}
+              >
+                {f.item.title}
+              </span>
+              <span className="bm-page">{f.item.page + 1}</span>
+            </div>
+          ))
+        )}
+      </div>
+    )
+  }
+
   /** 구조가 바뀌는 변경 — 선택/앵커는 path 기준이라 무효화되므로 비운다 */
   const applyStructural = (next: BookmarkItem[]): void => {
     setSelected(new Set())

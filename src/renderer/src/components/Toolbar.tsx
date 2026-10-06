@@ -2,8 +2,12 @@ import { useState } from 'react'
 import { useStore } from '../state/store'
 import Icon from './Icon'
 import OcrMenu from './OcrMenu'
+import { openFind } from '../lib/finder'
+import { EPUB_FONT } from '../../../shared/doc-kind'
 import {
   armImageTool,
+  changeEpubFontSize,
+  convertEpubToPdf,
   deletePageAt,
   exportDoc,
   exportImagesToFolder,
@@ -51,6 +55,11 @@ export default function Toolbar(): React.JSX.Element {
   const [ocrOpen, setOcrOpen] = useState(false)
 
   const has = !!info
+  // EPUB = 읽기 전용: 편집 도구는 끄고, 글자 크기·PDF 변환을 보여준다
+  const epub = info?.kind === 'epub'
+  const canEdit = has && !epub
+  const roTip = epub ? ' — EPUB은 읽기 전용 (PDF로 변환 후 편집)' : ''
+  const fontSize = info?.fontSize ?? EPUB_FONT.default
   const zoomTo = (z: number): void => set({ zoom: Math.max(0.1, Math.min(8, z)) })
 
   // 선택된 텍스트 객체 (있으면 그 스타일을 편집, 없으면 다음 입력의 기본 스타일)
@@ -75,13 +84,13 @@ export default function Toolbar(): React.JSX.Element {
   return (
     <div className="toolbar">
       <button className="tb-btn" onClick={() => void openFile()} title="열기 (Ctrl+O)"><Icon name="open" /></button>
-      <button className="tb-btn" disabled={!has} onClick={() => void saveFile()} title="저장 (Ctrl+S)"><Icon name="save" /></button>
+      <button className="tb-btn" disabled={!has} onClick={() => void saveFile()} title={epub ? 'PDF로 변환하여 저장 (Ctrl+S)' : '저장 (Ctrl+S)'}><Icon name="save" /></button>
       <button className="tb-btn" disabled={!has} onClick={() => refreshPages()} title="새로고침 — 멈춘 페이지 다시 불러오기 (F5)"><Icon name="refresh" /></button>
 
       <span className="tb-sep" />
 
-      <button className="tb-btn" disabled={!has || !canUndo} onClick={() => void undo()} title="실행취소 (Ctrl+Z)"><Icon name="undo" /></button>
-      <button className="tb-btn" disabled={!has || !canRedo} onClick={() => void redo()} title="다시실행 (Ctrl+Shift+Z)"><Icon name="redo" /></button>
+      <button className="tb-btn" disabled={!canEdit || !canUndo} onClick={() => void undo()} title="실행취소 (Ctrl+Z)"><Icon name="undo" /></button>
+      <button className="tb-btn" disabled={!canEdit || !canRedo} onClick={() => void redo()} title="다시실행 (Ctrl+Shift+Z)"><Icon name="redo" /></button>
 
       <span className="tb-sep" />
 
@@ -125,17 +134,28 @@ export default function Toolbar(): React.JSX.Element {
         <button className={`tb-btn ${viewMode === 'slide' ? 'active' : ''}`} disabled={!has} onClick={() => set({ viewMode: viewMode === 'slide' ? 'scroll' : 'slide' })} title="슬라이드 보기"><Icon name="slide" /></button>
       </span>
 
+      {epub && (
+        <>
+          <span className="tb-sep" />
+          <span className="tb-group tb-epub">
+            <button className="tb-btn tb-text tb-font-down" disabled={fontSize <= EPUB_FONT.min} onClick={() => void changeEpubFontSize(-EPUB_FONT.step)} title="EPUB 글자 작게">가−</button>
+            <span className="tb-zoom tb-font-size" title="EPUB 본문 글자 크기">{fontSize}pt</span>
+            <button className="tb-btn tb-text tb-font-up" disabled={fontSize >= EPUB_FONT.max} onClick={() => void changeEpubFontSize(EPUB_FONT.step)} title="EPUB 글자 크게">가+</button>
+          </span>
+        </>
+      )}
+
       <span className="tb-sep" />
 
       <span className="tb-group">
         <button className={`tb-btn ${tool === 'select' ? 'active' : ''}`} disabled={!has} onClick={() => set({ tool: 'select', pendingImage: null })} title="텍스트 선택"><Icon name="select" /></button>
-        <button className={`tb-btn ${tool === 'highlight' ? 'active' : ''}`} disabled={!has} onClick={() => set({ tool: 'highlight', pendingImage: null, selectedImage: null })} title="형광펜"><Icon name="highlight" /></button>
+        <button className={`tb-btn tb-tool-highlight ${tool === 'highlight' ? 'active' : ''}`} disabled={!canEdit} onClick={() => set({ tool: 'highlight', pendingImage: null, selectedImage: null })} title={`형광펜${roTip}`}><Icon name="highlight" /></button>
         {tool === 'highlight' &&
           HIGHLIGHT_COLORS.map((c) => (
             <button key={c} className={`swatch ${highlightColor === c ? 'active' : ''}`} style={{ background: c }} onClick={() => set({ highlightColor: c })} title={c} />
           ))}
-        <button className={`tb-btn ${tool === 'eraser' ? 'active' : ''}`} disabled={!has} onClick={() => set({ tool: 'eraser', pendingImage: null, selectedImage: null })} title="지우개 (형광펜/이미지/텍스트 클릭 삭제)"><Icon name="eraser" /></button>
-        <button className={`tb-btn ${tool === 'text' ? 'active' : ''}`} disabled={!has} onClick={() => set({ tool: 'text', pendingImage: null, selectedImage: null })} title="텍스트 추가 (페이지 클릭 후 입력 · 추가한 글자는 더블클릭으로 수정)"><Icon name="text" /></button>
+        <button className={`tb-btn ${tool === 'eraser' ? 'active' : ''}`} disabled={!canEdit} onClick={() => set({ tool: 'eraser', pendingImage: null, selectedImage: null })} title={`지우개 (형광펜/이미지/텍스트 클릭 삭제)${roTip}`}><Icon name="eraser" /></button>
+        <button className={`tb-btn ${tool === 'text' ? 'active' : ''}`} disabled={!canEdit} onClick={() => set({ tool: 'text', pendingImage: null, selectedImage: null })} title={`텍스트 추가 (페이지 클릭 후 입력 · 추가한 글자는 더블클릭으로 수정)${roTip}`}><Icon name="text" /></button>
         {showTextOpts && (
           <span className="tb-text-opts">
             <select className="tb-font" value={curFont} onChange={(e) => onFont(e.target.value)} title="글꼴">
@@ -161,9 +181,9 @@ export default function Toolbar(): React.JSX.Element {
             />
           </span>
         )}
-        <button className={`tb-btn ${tool === 'image' ? 'active' : ''}`} disabled={!has} onClick={() => void armImageTool()} title="이미지 삽입"><Icon name="image" /></button>
+        <button className={`tb-btn ${tool === 'image' ? 'active' : ''}`} disabled={!canEdit} onClick={() => void armImageTool()} title={`이미지 삽입${roTip}`}><Icon name="image" /></button>
         <span className="tb-pop">
-          <button className={`tb-btn ${ocrOpen ? 'active' : ''}`} disabled={!has} onClick={() => setOcrOpen((v) => !v)} title="OCR 글자 인식 (현재/범위/전체)"><Icon name="ocr" /></button>
+          <button className={`tb-btn ${ocrOpen ? 'active' : ''}`} disabled={!canEdit} onClick={() => setOcrOpen((v) => !v)} title={`OCR 글자 인식 (현재/범위/전체)${roTip}`}><Icon name="ocr" /></button>
           {ocrOpen && <OcrMenu onClose={() => setOcrOpen(false)} />}
         </span>
       </span>
@@ -171,16 +191,26 @@ export default function Toolbar(): React.JSX.Element {
       <span className="tb-sep" />
 
       <span className="tb-group">
-        <button className="tb-btn" disabled={!has} onClick={() => void insertBlankAt(currentPage + 1)} title="빈 페이지 삽입"><Icon name="pageAdd" /></button>
-        <button className="tb-btn" disabled={!has} onClick={() => void insertFromPdfAt(currentPage + 1)} title="다른 PDF에서 삽입"><Icon name="pdfAdd" /></button>
-        <button className="tb-btn" disabled={!has} onClick={() => void deletePageAt(currentPage)} title="현재 페이지 삭제"><Icon name="pageDel" /></button>
+        <button className="tb-btn" disabled={!canEdit} onClick={() => void insertBlankAt(currentPage + 1)} title={`빈 페이지 삽입${roTip}`}><Icon name="pageAdd" /></button>
+        <button className="tb-btn" disabled={!canEdit} onClick={() => void insertFromPdfAt(currentPage + 1)} title={`다른 PDF에서 삽입${roTip}`}><Icon name="pdfAdd" /></button>
+        <button className="tb-btn" disabled={!canEdit} onClick={() => void deletePageAt(currentPage)} title={`현재 페이지 삭제${roTip}`}><Icon name="pageDel" /></button>
       </span>
 
       <span className="tb-spacer" />
 
       <span className="tb-group">
+        <button className="tb-btn" disabled={!has} onClick={() => openFind()} title="찾기 (Ctrl+F)"><Icon name="search" /></button>
         <button className="tb-btn" disabled={!has} onClick={() => set({ showPrint: true })} title="인쇄 (Ctrl+P)"><Icon name="printer" /></button>
       </span>
+
+      {epub && (
+        <>
+          <span className="tb-sep" />
+          <button className="tb-btn tb-text tb-convert-pdf" onClick={() => void convertEpubToPdf()} title="EPUB을 PDF로 변환하여 저장 (현재 글자 크기 기준 · 텍스트·목차·링크 유지)">
+            <Icon name="download" /> PDF 변환
+          </button>
+        </>
+      )}
 
       <span className="tb-sep" />
 

@@ -1,7 +1,7 @@
 {
   "name": "icepdf",
-  "version": "1.7.0",
-  "description": "아크로벳 리더 스타일 PDF 뷰어/에디터 — 한글(HWPX)/Markdown 변환 내장",
+  "version": "1.8.0",
+  "description": "아크로벳 리더 스타일 PDF 뷰어/에디터 — 한글(HWPX)/Markdown 변환 내장, EPUB 읽기·PDF 변환",
   "main": "./out/main/index.js",
   "type": "module",
   "author": "icenovel",
