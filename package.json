@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test:bookmarks": "tsx tests/bookmarks.test.mjs",
     "spike": "node spike/engine-spike.mjs",
-    "dist": "electron-vite build && electron-builder --win --publish never"
+    "dist": "electron-vite build && electron-builder --win --publish never",
+    "dist:mac": "electron-vite build && electron-builder --mac --publish never"
   },
   "dependencies": {
     "kordoc": "^3.0.1",

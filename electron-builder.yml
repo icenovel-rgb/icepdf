@@ -11,12 +11,25 @@ files:
 extraResources:
   - from: build/icon.ico
     to: build/icon.ico
+  - from: build/icon.icns
+    to: build/icon.icns
 # kordoc의 OCR 전용 선택 의존성은 afterPack에서 제거 (files 제외 패턴은 node_modules 수집에 미적용)
 afterPack: build/after-pack.cjs
 win:
   target:
     - nsis
   icon: build/icon.ico
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  icon: build/icon.icns
+  category: public.app-category.productivity
+  # 서명 없이 배포 — 받는 사람이 우클릭→열기 또는 xattr -cr 로 실행
+  identity: null
+dmg:
+  artifactName: ICEPDF-${version}-${arch}.dmg
 fileAssociations:
   - ext: pdf
     name: PDF 문서

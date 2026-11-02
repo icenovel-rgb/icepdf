@@ -33,7 +33,12 @@ function sweep(nodeModules, removed) {
 }
 
 exports.default = async function afterPack(context) {
-  const root = path.join(context.appOutDir, 'resources', 'app', 'node_modules')
+  // 앱 리소스 경로는 플랫폼마다 다르다: mac은 {productName}.app/Contents/Resources/app
+  const isMac = context.electronPlatformName === 'darwin'
+  const appName = context.packager.appInfo.productFilename
+  const root = isMac
+    ? path.join(context.appOutDir, `${appName}.app`, 'Contents', 'Resources', 'app', 'node_modules')
+    : path.join(context.appOutDir, 'resources', 'app', 'node_modules')
   const removed = []
   sweep(root, removed)
   for (const r of removed) console.log(`  • afterPack 제거: ${path.relative(root, r)}`)
