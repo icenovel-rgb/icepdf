@@ -294,6 +294,14 @@ export default function App(): React.JSX.Element {
         findStep(e.shiftKey ? -1 : 1)
         return
       }
+      // 쪽 넘기기(PageUp/PageDown)는 쪽 번호 입력칸·찾기 입력칸에 포커스가 남아 있어도 동작.
+      // 텍스트 편집(textarea)에서는 커서 이동이 우선이므로 제외.
+      const slide = s.viewMode === 'slide'
+      if ((e.key === 'PageDown' || e.key === 'PageUp') && s.info && !modalOpen && tag !== 'TEXTAREA') {
+        e.preventDefault()
+        s.gotoPage(s.currentPage + (e.key === 'PageDown' ? 1 : -1))
+        return
+      }
       if (inInput) return
       // 되돌리기 / 다시하기 (텍스트 편집 중에는 textarea가 stopPropagation → 네이티브 실행취소)
       if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
@@ -307,7 +315,6 @@ export default function App(): React.JSX.Element {
         void redo()
         return
       }
-      const slide = s.viewMode === 'slide'
       if (e.ctrlKey && e.key === 'Tab') {
         // Ctrl+T / Ctrl+W는 메뉴 가속기가 담당 (중복 발화 방지). 순환만 여기서.
         e.preventDefault()
@@ -326,10 +333,10 @@ export default function App(): React.JSX.Element {
         else if (s.fullscreen || s.chromeHidden) exitChrome()
         else if (s.selectedImage) deselectImage()
         else s.set({ selection: null, pendingImage: null, tool: s.tool === 'image' ? 'select' : s.tool })
-      } else if ((e.key === 'PageDown' || (slide && (e.key === 'ArrowRight' || e.key === 'ArrowDown'))) && s.info) {
+      } else if (slide && (e.key === 'ArrowRight' || e.key === 'ArrowDown') && s.info) {
         e.preventDefault()
         s.gotoPage(s.currentPage + 1)
-      } else if ((e.key === 'PageUp' || (slide && (e.key === 'ArrowLeft' || e.key === 'ArrowUp'))) && s.info) {
+      } else if (slide && (e.key === 'ArrowLeft' || e.key === 'ArrowUp') && s.info) {
         e.preventDefault()
         s.gotoPage(s.currentPage - 1)
       }
