@@ -180,6 +180,7 @@ export default function App(): React.JSX.Element {
   const chromeHidden = useStore((s) => s.chromeHidden)
   const set = useStore((s) => s.set)
   const [dragOver, setDragOver] = useState(false)
+  const contentRef = useRef<HTMLDivElement>(null)
   const resizing = useRef(false)
 
   useEffect(() => window.icepdf.onMenuAction(handleMenuAction), [])
@@ -294,12 +295,21 @@ export default function App(): React.JSX.Element {
         findStep(e.shiftKey ? -1 : 1)
         return
       }
-      // 쪽 넘기기(PageUp/PageDown)는 쪽 번호 입력칸·찾기 입력칸에 포커스가 남아 있어도 동작.
+      // PageUp/PageDown은 쪽 번호·찾기 입력칸 포커스 중에도 보기 방식에 맞춰 이동.
       // 텍스트 편집(textarea)에서는 커서 이동이 우선이므로 제외.
       const slide = s.viewMode === 'slide'
       if ((e.key === 'PageDown' || e.key === 'PageUp') && s.info && !modalOpen && tag !== 'TEXTAREA') {
         e.preventDefault()
-        s.gotoPage(s.currentPage + (e.key === 'PageDown' ? 1 : -1))
+        const direction = e.key === 'PageDown' ? 1 : -1
+        if (slide) {
+          s.gotoPage(s.currentPage + direction)
+        } else {
+          const scroller = contentRef.current?.querySelector<HTMLElement>(
+            s.viewMode === 'grid' ? '.grid-body' : '.viewer'
+          )
+          // 읽던 문맥이 이어지도록 화면의 10%를 겹쳐 스크롤한다.
+          scroller?.scrollBy({ top: direction * scroller.clientHeight * 0.9, behavior: 'smooth' })
+        }
         return
       }
       if (inInput) return
@@ -401,7 +411,7 @@ export default function App(): React.JSX.Element {
             />
           </>
         )}
-        <div className="content">
+        <div ref={contentRef} className="content">
           {info && <FindBar />}
           {!info ? (
             <div className="welcome">

@@ -34,7 +34,7 @@
 | Ctrl+= / Ctrl+- / Ctrl+0 | 확대 / 축소 / 폭 맞춤 |
 | Ctrl+G | 그리드 보기 전환 |
 | F4 | 사이드바 전환 |
-| PageUp / PageDown | 페이지 이동 |
+| PageUp / PageDown | 화면 단위 스크롤 (슬라이드 보기에서는 페이지 이동) |
 
 ## 개발
 
