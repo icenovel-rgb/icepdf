@@ -1,5 +1,7 @@
 /** 렌더러·메인·워커가 공유하는 타입. 좌표는 전부 fitz 공간(좌상단 원점, y 아래, 72dpi 포인트). */
 import type { DocKind } from './doc-kind'
+import type { TextAnchor } from './anchor'
+import type { NoteStyle } from './reading'
 
 export interface PageInfo {
   width: number
@@ -22,6 +24,25 @@ export interface DocInfo {
   kind: DocKind
   /** EPUB 본문 글자 크기(pt). PDF는 null */
   fontSize: number | null
+  /** 읽기 기록(읽던 곳·밑줄) 키 — EPUB은 내용 해시, PDF는 경로 */
+  key: string
+}
+
+/** PDF 형광펜 그룹 한 건 (모아보기) */
+export interface PdfHighlightInfo {
+  id: string
+  page: number
+  y: number
+  text: string
+  color: string
+  style: NoteStyle
+  createdAt: number
+}
+
+/** EPUB 앵커 해석 결과 — 못 찾았으면 marks가 빈 배열 */
+export interface ResolvedNoteInfo {
+  id: string
+  marks: { page: number; rects: Rect[] }[]
 }
 
 /** 사각형 [x0, y0, x1, y1] */
@@ -80,7 +101,8 @@ export interface ConvertResult {
 export interface EngineOps {
   open: { args: { path: string }; result: DocInfo }
   docInfo: { args: Record<string, never>; result: DocInfo }
-  render: { args: { page: number; scale: number }; result: RenderResult }
+  /** plain = EPUB 읽기 테마와 상관없이 원래 색 (인쇄용) */
+  render: { args: { page: number; scale: number; plain?: boolean }; result: RenderResult }
   selection: {
     args: { page: number; ax: number; ay: number; bx: number; by: number }
     result: SelectionResult
@@ -92,9 +114,23 @@ export interface EngineOps {
   /** EPUB을 현재 레이아웃 그대로 PDF 파일로 변환 저장 */
   exportPdf: { args: { path: string }; result: { path: string; pageCount: number } }
   addHighlight: {
-    args: { page: number; quads: Quad[]; color: [number, number, number]; opacity: number }
-    result: { count: number }
+    args: {
+      page: number
+      quads: Quad[]
+      color: [number, number, number]
+      opacity: number
+      style?: NoteStyle
+      text?: string
+      id?: string
+    }
+    result: { count: number; id: string }
   }
+  /** EPUB 읽기 테마 (전역 — 열린 EPUB 전체 재배치) */
+  setTheme: { args: { theme: string }; result: null }
+  noteAnchor: { args: { page: number; quads: Quad[] }; result: TextAnchor | null }
+  resolveNotes: { args: { notes: { id: string; anchor: TextAnchor }[] }; result: ResolvedNoteInfo[] }
+  listHighlights: { args: Record<string, never>; result: PdfHighlightInfo[] }
+  deleteHighlight: { args: { id: string }; result: { removed: number } }
   addImage: { args: { page: number; rect: Rect; png: ArrayBuffer }; result: { index: number; count: number } }
   updateStamp: { args: { page: number; index: number; rect: Rect; png: ArrayBuffer }; result: { count: number } }
   setAnnotRect: { args: { page: number; index: number; rect: Rect }; result: { count: number } }
@@ -106,7 +142,7 @@ export interface EngineOps {
   insertFromPdf: { args: { at: number; path: string }; result: DocInfo }
   deletePage: { args: { page: number }; result: DocInfo }
   setOutline: { args: { items: BookmarkItem[] }; result: DocInfo }
-  save: { args: { path: string }; result: { path: string } }
+  save: { args: { path: string }; result: { path: string; key: string } }
   getPdfBuffer: { args: Record<string, never>; result: ArrayBuffer }
   reorderAnnot: { args: { page: number; index: number; where: 'front' | 'back' }; result: { info: DocInfo; index: number } }
   undo: { args: Record<string, never>; result: { info: DocInfo; canUndo: boolean; canRedo: boolean } }
@@ -148,5 +184,10 @@ export type MenuAction =
   | 'toggleSlide'
   | 'toggleSidebar'
   | 'toggleFullscreen'
+  | 'toggleChrome'
+  | 'themeLight'
+  | 'themeSepia'
+  | 'themeDark'
+  | 'showNotes'
   | 'support'
   | 'checkUpdate'

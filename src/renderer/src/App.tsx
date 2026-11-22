@@ -12,6 +12,10 @@ import SupportModal from './components/SupportModal'
 import PrintModal from './components/PrintModal'
 import FindBar from './components/FindBar'
 import UpdateBanner from './components/UpdateBanner'
+import NotesPanel from './components/NotesPanel'
+import QuoteCardModal from './components/QuoteCardModal'
+import { exitChrome, toggleChrome, toggleFullscreen } from './lib/chrome'
+import { initReading, setEpubTheme } from './lib/reading'
 import { AUTO_CHECK_DELAY, runUpdateCheck } from './lib/update'
 import { closeFind, findStep, installFindAutoRerun, openFind } from './lib/finder'
 import { EPUB_FONT, isOpenableDocPath } from '../../shared/doc-kind'
@@ -139,6 +143,21 @@ function handleMenuAction(action: MenuAction): void {
     case 'toggleFullscreen':
       toggleFullscreen()
       break
+    case 'toggleChrome':
+      toggleChrome()
+      break
+    case 'themeLight':
+      void setEpubTheme('light')
+      break
+    case 'themeSepia':
+      void setEpubTheme('sepia')
+      break
+    case 'themeDark':
+      void setEpubTheme('dark')
+      break
+    case 'showNotes':
+      if (s.info) s.set({ sidebar: 'notes', chromeHidden: false, chromePeek: false })
+      break
     case 'support':
       s.set({ showSupport: true })
       break
@@ -148,26 +167,8 @@ function handleMenuAction(action: MenuAction): void {
   }
 }
 
-/** Ctrl+L: 크롬 숨김 + 창 전체화면 */
-function toggleFullscreen(): void {
-  const s = useStore.getState()
-  const next = !s.fullscreen
-  s.set({ fullscreen: next, chromeHidden: next })
-  void window.icepdf.setFullScreen(next)
-}
-
-/** Tab: 크롬(툴바)만 숨김/표시 */
-function toggleChrome(): void {
-  const s = useStore.getState()
-  s.set({ chromeHidden: !s.chromeHidden })
-}
-
-/** Esc: 전체화면/크롬 숨김 해제 */
-function exitChrome(): void {
-  const s = useStore.getState()
-  if (s.fullscreen) void window.icepdf.setFullScreen(false)
-  s.set({ chromeHidden: false, fullscreen: false })
-}
+/** 숨긴 도구가 위쪽 끝에서 잠깐 나타났다가, 마우스가 떠나면 이만큼 뒤에 다시 숨는다 (ms) */
+const PEEK_HIDE_DELAY = 450
 
 export default function App(): React.JSX.Element {
   const info = useStore((s) => s.info)
@@ -177,13 +178,22 @@ export default function App(): React.JSX.Element {
   const busy = useStore((s) => s.busy)
   const toast = useStore((s) => s.toast)
   const dirty = useStore((s) => s.dirty)
-  const chromeHidden = useStore((s) => s.chromeHidden)
+  // 문서가 없으면(마지막 탭을 닫으면) 도구는 항상 보인다 — 숨긴 채 닫아도 되살릴 길이 남게
+  const chromeHidden = useStore((s) => s.chromeHidden && !!s.info)
+  const chromePeek = useStore((s) => s.chromePeek)
+  const readingTheme = useStore((s) => (s.info?.kind === 'epub' ? s.epubTheme : undefined))
   const set = useStore((s) => s.set)
+  const peekTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
   const resizing = useRef(false)
 
   useEffect(() => window.icepdf.onMenuAction(handleMenuAction), [])
+
+  // 저장된 EPUB 읽기 테마 적용 + 읽던 곳 추적 시작
+  useEffect(() => {
+    void initReading()
+  }, [])
 
   // 연결 프로그램으로 열기 / 두 번째 인스턴스
   useEffect(() => {
@@ -281,6 +291,11 @@ export default function App(): React.JSX.Element {
       }
       // 찾기도 입력 포커스 중에 동작 (찾기 입력칸에서 Ctrl+F = 다시 전체 선택).
       // e.code로 판별 — 한글 입력 상태에서는 e.key가 'ㄹ'이 된다.
+      // 문장 카드 창이 떠 있으면 뒤 문서 단축키(Delete=쪽 삭제 등)를 막고 Esc만 받는다
+      if (s.cardDraft) {
+        if (e.key === 'Escape') s.set({ cardDraft: null })
+        return
+      }
       // 모달(인쇄·후원)이 떠 있으면 무시 — 뒤에서 찾기 막대가 포커스를 가져가 모달 입력이 뒤 문서로 새는 것 방지
       const modalOpen = s.showPrint || s.showSupport
       const isFind = e.ctrlKey && !e.altKey && !e.shiftKey && e.code === 'KeyF'
@@ -312,6 +327,15 @@ export default function App(): React.JSX.Element {
         }
         return
       }
+      // Tab = 도구 숨기기/보이기. 입력칸 중에는 쪽 번호·찾기 칸에서만 (책갈피 이름 바꾸기 등
+      // 다른 칸의 Tab·Shift+Tab 포커스 이동은 그대로 둔다)
+      const navInput = inInput && !!(e.target as HTMLElement).closest('.tb-page, .find-bar')
+      if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && s.info && !modalOpen && (!inInput || (navInput && !e.shiftKey))) {
+        e.preventDefault()
+        if (inInput) (e.target as HTMLElement).blur()
+        toggleChrome()
+        return
+      }
       if (inInput) return
       // 되돌리기 / 다시하기 (텍스트 편집 중에는 textarea가 stopPropagation → 네이티브 실행취소)
       if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
@@ -333,9 +357,6 @@ export default function App(): React.JSX.Element {
         // OCR 텍스트 레이어 등 네이티브 선택이 있으면 브라우저 기본 복사에 맡긴다
         if ((window.getSelection()?.toString() ?? '').trim()) return
         void copySelection()
-      } else if (e.key === 'Tab' && !e.ctrlKey && s.info) {
-        e.preventDefault()
-        toggleChrome()
       } else if (e.key === 'Delete' && s.info) {
         void deleteSelectedOrPage()
       } else if (e.key === 'Escape') {
@@ -374,8 +395,19 @@ export default function App(): React.JSX.Element {
     if (path) void openFile(path)
   }
 
+  const showPeek = (): void => {
+    if (peekTimer.current) clearTimeout(peekTimer.current)
+    peekTimer.current = null
+    if (!useStore.getState().chromePeek) set({ chromePeek: true })
+  }
+  const hidePeekSoon = (): void => {
+    if (peekTimer.current) clearTimeout(peekTimer.current)
+    peekTimer.current = setTimeout(() => set({ chromePeek: false }), PEEK_HIDE_DELAY)
+  }
+
   return (
     <div
+      data-reading-theme={readingTheme}
       className="app"
       onDragOver={(e) => {
         if (!isFileDrag(e)) return // 책갈피 순서 변경 등 내부 드래그는 가로채지 않음
@@ -389,6 +421,16 @@ export default function App(): React.JSX.Element {
     >
       {!chromeHidden && <TabBar />}
       {!chromeHidden && <Toolbar />}
+      {chromeHidden && (
+        // 숨긴 도구: 위쪽 끝에 마우스를 대면 탭 막대·툴바가 문서 위에 겹쳐 잠깐 나타난다
+        <div className="chrome-hotzone" onMouseEnter={showPeek} />
+      )}
+      {chromeHidden && chromePeek && (
+        <div className="chrome-peek" onMouseEnter={showPeek} onMouseLeave={hidePeekSoon}>
+          <TabBar />
+          <Toolbar />
+        </div>
+      )}
       <div className="main">
         {info && sidebar && !chromeHidden && (
           <>
@@ -398,8 +440,11 @@ export default function App(): React.JSX.Element {
                 <button className={sidebar === 'bookmarks' ? 'active' : ''} onClick={() => set({ sidebar: 'bookmarks' })}>
                   {info.kind === 'epub' ? '목차' : '책갈피'}
                 </button>
+                <button className={sidebar === 'notes' ? 'active' : ''} onClick={() => set({ sidebar: 'notes' })}>밑줄</button>
               </div>
-              <div className="sidebar-body">{sidebar === 'thumbnails' ? <ThumbnailPanel /> : <BookmarkPanel />}</div>
+              <div className="sidebar-body">
+                {sidebar === 'thumbnails' ? <ThumbnailPanel /> : sidebar === 'notes' ? <NotesPanel /> : <BookmarkPanel />}
+              </div>
             </div>
             <div
               className="sidebar-resizer"
@@ -438,6 +483,7 @@ export default function App(): React.JSX.Element {
       {dragOver && <div className="drop-overlay">여기에 PDF·EPUB을 놓으세요</div>}
       <SupportModal />
       <PrintModal />
+      <QuoteCardModal />
       <UpdateBanner />
       {toast && <div className="toast">{toast}</div>}
     </div>

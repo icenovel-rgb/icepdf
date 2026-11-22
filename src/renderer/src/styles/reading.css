@@ -1,0 +1,426 @@
+/* v1.10 읽기 기능 — 도구 자동 숨김, EPUB 테마, 밑줄 표시, 선택 팝업, 모아보기, 문장 카드 */
+
+/* ── 도구 자동 숨김 ── */
+.chrome-hotzone {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  z-index: 299;
+}
+.chrome-peek {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 300;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+  animation: peek-in 0.14s ease-out;
+}
+@keyframes peek-in {
+  from {
+    transform: translateY(-12px);
+    opacity: 0;
+  }
+}
+
+/* ── EPUB 읽기 테마 ── */
+.tb-themes {
+  margin-left: 4px;
+}
+.tb-theme {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid #0007;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 22px;
+  cursor: pointer;
+}
+.tb-theme.theme-light {
+  background: #ffffff;
+  color: #222;
+}
+.tb-theme.theme-sepia {
+  background: #f4ecd8;
+  color: #5b4636;
+}
+.tb-theme.theme-dark {
+  background: #1e1e1e;
+  color: #d6d6d6;
+  border-color: #666;
+}
+.tb-theme.active {
+  outline: 2px solid #1f6feb;
+  outline-offset: 1px;
+}
+.app[data-reading-theme='sepia'] .viewer,
+.app[data-reading-theme='sepia'] .grid-body {
+  background: #d9ceb6;
+}
+.app[data-reading-theme='sepia'] .page-view {
+  background: #f4ecd8;
+}
+.app[data-reading-theme='dark'] .viewer,
+.app[data-reading-theme='dark'] .grid-body,
+.app[data-reading-theme='dark'] .slide-view {
+  background: #0e0e0f;
+}
+.app[data-reading-theme='dark'] .page-view {
+  background: #1e1e1e;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.9);
+}
+/* 어두운 종이에서는 곱하기 합성이 안 보인다 → 스크린 합성 */
+.app[data-reading-theme='dark'] .sel-quad,
+.app[data-reading-theme='dark'] .find-hit {
+  mix-blend-mode: screen;
+}
+
+/* ── 밑줄 (EPUB 쪽 위 표시) ── */
+.note-mark {
+  position: absolute;
+  pointer-events: none;
+  z-index: 2;
+}
+.note-mark.highlight {
+  background: var(--note);
+  opacity: 0.42;
+  mix-blend-mode: multiply;
+}
+.note-mark.highlight.on-dark {
+  opacity: 0.34;
+  mix-blend-mode: screen;
+}
+.note-mark.underline {
+  border-bottom: 2.5px solid var(--note);
+}
+
+/* ── 선택 팝업 ── */
+.sel-popup {
+  position: absolute;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0 8px;
+  background: #26272b;
+  border: 1px solid #45474d;
+  border-radius: 18px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  line-height: normal;
+  cursor: default;
+  animation: peek-in 0.12s ease-out;
+}
+.sel-swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid #0006;
+  border-radius: 50%;
+  background: var(--swatch);
+  cursor: pointer;
+}
+.sel-swatch.underline {
+  height: 16px;
+  border: none;
+  border-radius: 2px;
+  border-bottom: 4px solid var(--swatch);
+  background: transparent;
+}
+.sel-swatch:hover {
+  transform: scale(1.15);
+}
+.sel-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 3px;
+  background: #4a4c52;
+}
+.sel-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: #d6d8dd;
+  cursor: pointer;
+}
+.sel-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.sel-btn.active {
+  background: #1f6feb;
+  color: #fff;
+}
+
+/* ── 밑줄 모아보기 ── */
+.notes-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.notes-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 8px 6px;
+  border-bottom: 1px solid #3a3c41;
+}
+.notes-count {
+  flex: 1;
+  font-size: 12px;
+  color: #aeb2ba;
+}
+.notes-head button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  padding: 0 7px;
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid #4a4c52;
+  border-radius: 5px;
+  color: #cdd0d6;
+  cursor: pointer;
+}
+.notes-head button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.notes-empty {
+  padding: 18px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #8d919a;
+}
+.notes-list {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+}
+.note-row {
+  position: relative;
+  display: flex;
+  gap: 8px;
+  padding: 9px 10px;
+  border-bottom: 1px solid #303236;
+  cursor: pointer;
+}
+.note-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.note-row.lost {
+  opacity: 0.55;
+}
+.note-chip {
+  flex: none;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--note);
+}
+.note-chip.underline {
+  width: 0;
+  background: transparent;
+  border-left: 3px dashed var(--note);
+}
+.note-body {
+  flex: 1;
+  min-width: 0;
+}
+.note-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #e3e5e9;
+  white-space: pre-wrap;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.note-meta {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #8d919a;
+}
+.note-actions {
+  position: absolute;
+  right: 6px;
+  bottom: 5px;
+  display: none;
+  gap: 2px;
+  background: #2d2e32;
+  border-radius: 6px;
+}
+.note-row:hover .note-actions {
+  display: flex;
+}
+.note-actions button {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: #cdd0d6;
+  cursor: pointer;
+}
+.note-actions button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* ── 문장 카드 ── */
+.card-modal {
+  display: flex;
+  gap: 20px;
+  max-width: min(1060px, 94vw);
+  max-height: 92vh;
+  padding: 20px;
+  background: #2a2b2e;
+  border: 1px solid #3c3e44;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  color: #e2e4e8;
+}
+.card-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+.card-canvas {
+  display: block;
+  max-height: calc(92vh - 40px);
+  max-width: min(560px, 52vw);
+  border-radius: 6px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+}
+.card-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 340px;
+  overflow-y: auto;
+}
+.card-controls h2 {
+  margin: 0;
+  font-size: 17px;
+}
+.card-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: #aeb2ba;
+}
+.card-field small {
+  color: #7d818a;
+}
+.card-field textarea,
+.card-field input[type='text'],
+.card-field select {
+  padding: 6px 8px;
+  background: #1c1d20;
+  border: 1px solid #4a4c52;
+  border-radius: 6px;
+  color: #e2e4e8;
+  font-size: 13px;
+  font-family: inherit;
+}
+.card-field textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+.card-field input[type='color'] {
+  width: 44px;
+  height: 28px;
+  padding: 1px;
+  background: #1c1d20;
+  border: 1px solid #4a4c52;
+  border-radius: 6px;
+}
+.card-row {
+  display: flex;
+  gap: 14px;
+  align-items: flex-end;
+}
+.card-grow {
+  flex: 1;
+}
+.card-bgs {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+.card-bg {
+  aspect-ratio: 2 / 3;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background-size: cover;
+  background-position: center;
+  box-shadow: inset 0 0 0 1px #0004;
+  cursor: pointer;
+}
+.card-bg.active {
+  border-color: #1f6feb;
+}
+.card-seg {
+  display: flex;
+  gap: 4px;
+}
+.card-seg button {
+  flex: 1;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  background: #1c1d20;
+  border: 1px solid #4a4c52;
+  border-radius: 6px;
+  color: #cdd0d6;
+  cursor: pointer;
+}
+.card-seg button.active {
+  background: #1f6feb;
+  border-color: #1f6feb;
+  color: #fff;
+}
+.card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.card-actions button {
+  flex: 1;
+  height: 34px;
+  font-size: 13px;
+  background: #34363b;
+  border: 1px solid #4a4c52;
+  border-radius: 7px;
+  color: #e2e4e8;
+  cursor: pointer;
+}
+.card-actions button.primary {
+  background: #1f6feb;
+  border-color: #1f6feb;
+  color: #fff;
+}

@@ -93,7 +93,8 @@ export async function renderPagesForPrint(
   const out: RenderedPage[] = []
   for (let i = 0; i < pages.length; i++) {
     const page = pages[i]
-    const r = await eng('render', { page, scale })
+    // plain: EPUB 다크·세피아 테마로 읽는 중이어도 종이에는 원래 색(흰 바탕)으로 찍는다
+    const r = await eng('render', { page, scale, plain: true })
     const src = await pngToDataUrl(r.png)
     out.push({ page, src, w: r.width, h: r.height })
     onProgress?.(i + 1, pages.length)

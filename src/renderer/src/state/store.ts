@@ -2,10 +2,18 @@ import { create } from 'zustand'
 import type { DocInfo, Quad, Rect, SearchHit } from '../../../shared/types'
 import type { FindStatus } from '../lib/find'
 import type { LatestRelease } from '../../../shared/version'
+import type { EpubNote, EpubTheme, NoteItem, NoteMark, NoteStyle } from '../../../shared/reading'
 
 export type Tool = 'select' | 'highlight' | 'eraser' | 'image' | 'text'
 export type ViewMode = 'scroll' | 'grid' | 'slide'
-export type SidebarTab = 'thumbnails' | 'bookmarks'
+export type SidebarTab = 'thumbnails' | 'bookmarks' | 'notes'
+
+/** 문장 카드 편집 창에 넘기는 내용 */
+export interface CardDraft {
+  text: string
+  /** 책 제목 (카드 아래 출처) */
+  source: string
+}
 
 export interface Selection {
   page: number
@@ -76,6 +84,12 @@ export interface DocSlice {
   /** 되돌리기/다시하기 가능 여부 (문서별) */
   canUndo: boolean
   canRedo: boolean
+  /** 밑줄 모아보기 목록 (EPUB=서재 기록, PDF=형광펜 주석) */
+  notes: NoteItem[]
+  /** EPUB 쪽 위에 그리는 밑줄 표시 (쪽 번호 → 표시들) */
+  noteMarks: Record<number, NoteMark[]>
+  /** EPUB 밑줄 원본 기록 — library.json에 그대로 저장 */
+  epubNotes: EpubNote[]
 }
 
 /** 윈도우 탐색기 스타일 탭 — 각자 독립 문서(docId)와 슬라이스 보유 */
@@ -89,7 +103,7 @@ export interface Tab {
 const SLICE_KEYS = [
   'info', 'dirty', 'currentPage', 'zoom', 'fitWidthTick', 'fitPageTick', 'viewMode',
   'spread', 'cover', 'tool', 'pendingImage', 'selection', 'selectedImage', 'ocrLayers',
-  'epoch', 'scrollTarget', 'scrollTargetY', 'navSeq', 'canUndo', 'canRedo'
+  'epoch', 'scrollTarget', 'scrollTargetY', 'navSeq', 'canUndo', 'canRedo', 'notes', 'noteMarks', 'epubNotes'
 ] as const
 
 const EMPTY_SLICE: DocSlice = {
@@ -112,7 +126,10 @@ const EMPTY_SLICE: DocSlice = {
   scrollTargetY: null,
   navSeq: 0,
   canUndo: false,
-  canRedo: false
+  canRedo: false,
+  notes: [],
+  noteMarks: {},
+  epubNotes: []
 }
 
 let nextTabId = 1
@@ -138,6 +155,14 @@ interface AppState extends DocSlice {
   chromeHidden: boolean
   /** 창 전체화면 — Ctrl+L (크롬 숨김 동반) */
   fullscreen: boolean
+  /** 도구를 숨긴 상태에서 마우스를 위쪽 끝에 대 잠깐 보이는 중 */
+  chromePeek: boolean
+  /** EPUB 읽기 테마 (앱 전역 — mupdf CSS가 전역이라 열린 EPUB 전체에 적용) */
+  epubTheme: EpubTheme
+  /** 새 밑줄 스타일 (형광/밑줄) */
+  highlightStyle: NoteStyle
+  /** 문장 카드 편집 창 — null이면 닫힘 */
+  cardDraft: CardDraft | null
   /** 후원 모달 표시 */
   showSupport: boolean
   /** 인쇄 미리보기 모달 표시 */
@@ -174,8 +199,8 @@ interface AppState extends DocSlice {
    */
   updateDoc: (docId: number, fn: (slice: DocSlice) => Partial<DocSlice>) => void
   showToast: (message: string) => void
-  /** 새 문서를 탭으로 열고 활성화 */
-  openTab: (docId: number, info: DocInfo) => void
+  /** 새 문서를 탭으로 열고 활성화 — page는 처음 보여줄 쪽(읽던 곳) */
+  openTab: (docId: number, info: DocInfo, page?: number) => void
   /** 탭 전환 (현재 슬라이스 보존 후 대상 복원) */
   switchTab: (tabId: number) => void
   /** 탭 제거 (엔진 문서 해제는 호출부 책임) — 활성 탭이면 이웃으로 전환 */
@@ -217,7 +242,14 @@ export const useStore = create<AppState>((set, get) => ({
   panMode: false,
   chromeHidden: false,
   fullscreen: false,
+  chromePeek: false,
+  epubTheme: 'light',
+  highlightStyle: 'highlight',
+  cardDraft: null,
   ocrLayers: {},
+  notes: [],
+  noteMarks: {},
+  epubNotes: [],
   showSupport: false,
   showPrint: false,
   epoch: 0,
@@ -283,14 +315,15 @@ export const useStore = create<AppState>((set, get) => ({
     toastTimer = setTimeout(() => set({ toast: null }), 4000)
   },
 
-  openTab: (docId, info) => {
+  openTab: (docId, info, page = 0) => {
     const s = get()
     const saved =
       s.activeTabId != null
         ? s.tabs.map((t) => (t.id === s.activeTabId ? { ...t, snapshot: sliceOf(s) } : t))
         : s.tabs
     const id = nextTabId++
-    const slice: DocSlice = { ...EMPTY_SLICE, info, scrollTarget: 0 }
+    const start = Math.max(0, Math.min(info.pageCount - 1, page))
+    const slice: DocSlice = { ...EMPTY_SLICE, info, currentPage: start, scrollTarget: start }
     set({
       tabs: [...saved, { id, docId, snapshot: slice }],
       activeTabId: id,

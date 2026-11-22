@@ -52,7 +52,9 @@ const ro = await st(() => ({
   badge: document.querySelector('.sb-epub')?.textContent ?? '',
   convert: !!document.querySelector('.tb-convert-pdf')
 }))
-report('편집 도구 비활성 (형광펜)', ro.hl === true)
+// v1.10부터 형광펜·지우개는 EPUB에서도 쓴다(밑줄은 서재 기록에 저장). 글자·이미지 넣기 같은 편집은 여전히 비활성
+report('형광펜은 EPUB에서도 활성 (밑줄)', ro.hl === false)
+report('텍스트 추가는 비활성 (읽기 전용)', await st(() => document.querySelector('.tb-btn[title^="텍스트 추가"]')?.disabled === true))
 report('상태바 EPUB 읽기 전용 배지', ro.badge.includes('읽기 전용'), ro.badge)
 report('툴바 PDF 변환 버튼 표시', ro.convert)
 

@@ -2,9 +2,13 @@ import { app, BrowserWindow, Menu, dialog, ipcMain, nativeImage, shell } from 'e
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { registerIpc, setInitialFile } from './ipc'
+import { flushLibrary, registerLibraryIpc } from './library'
 import { shutdownEngine } from './engine/proxy'
 import { isOpenableDocPath } from '../shared/doc-kind'
 import type { MenuAction } from '../shared/types'
+
+// 테스트용 — 사용자 데이터(읽던 곳·밑줄 기록) 위치를 바꿔 실제 기록을 건드리지 않게 한다
+if (process.env.ICEPDF_USER_DATA) app.setPath('userData', process.env.ICEPDF_USER_DATA)
 
 let mainWindow: BrowserWindow | null = null
 /** 렌더러가 보고한 저장 안 한 변경 여부 (창 닫기 확인용) */
@@ -90,10 +94,21 @@ function buildMenu(): void {
         { label: '그리드 보기 전환', accelerator: 'Ctrl+G', click: () => send('toggleGrid') },
         { label: '슬라이드 보기 전환', accelerator: 'Ctrl+Shift+P', click: () => send('toggleSlide') },
         { label: '전체 화면 (툴바 숨김)', accelerator: 'Ctrl+L', click: () => send('toggleFullscreen') },
+        // Tab은 렌더러가 처리 — 메뉴 가속기로 잡으면 입력칸의 Tab까지 가로챈다
+        { label: '도구 숨기기/보이기', accelerator: 'Tab', registerAccelerator: false, click: () => send('toggleChrome') },
         { label: '사이드바 전환', accelerator: 'F4', click: () => send('toggleSidebar') },
+        { label: '밑줄 모아보기', accelerator: 'Ctrl+Shift+U', click: () => send('showNotes') },
         { type: 'separator' },
         { label: 'EPUB 글자 크게', click: () => send('epubFontUp') },
         { label: 'EPUB 글자 작게', click: () => send('epubFontDown') },
+        {
+          label: 'EPUB 읽기 테마',
+          submenu: [
+            { label: '화이트', click: () => send('themeLight') },
+            { label: '세피아', click: () => send('themeSepia') },
+            { label: '다크', click: () => send('themeDark') }
+          ]
+        },
         { type: 'separator' },
         { label: '개발자 도구', accelerator: 'F12', role: 'toggleDevTools' }
       ]
@@ -226,6 +241,7 @@ if (!gotLock) {
   app.whenReady().then(() => {
     setInitialFile(docPathFromArgv(process.argv))
     registerIpc()
+    registerLibraryIpc()
     registerWindowIpc()
     buildMenu()
     createWindow()
@@ -234,7 +250,11 @@ if (!gotLock) {
     })
   })
 
+  // 읽던 곳·밑줄은 모아서 쓰므로 종료 직전에 남은 것을 기록
+  app.on('before-quit', () => flushLibrary())
+
   app.on('window-all-closed', () => {
+    flushLibrary()
     shutdownEngine()
     if (process.platform !== 'darwin') app.quit()
   })

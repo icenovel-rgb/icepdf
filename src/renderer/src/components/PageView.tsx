@@ -22,6 +22,7 @@ import {
 } from '../lib/actions'
 import { CURSOR_ERASER, CURSOR_ROTATE } from '../lib/cursors'
 import Icon from './Icon'
+import SelectionPopup from './SelectionPopup'
 import type { LinkInfo, Quad, Rect } from '../../../shared/types'
 
 interface Props {
@@ -68,6 +69,8 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
   const set = useStore((s) => s.set)
   const findHits = useStore((s) => (s.findDocId === s.activeDocId ? s.findHits : NO_HITS))
   const findIndex = useStore((s) => s.findIndex)
+  const noteMarks = useStore((s) => s.noteMarks[page])
+  const darkPaper = useStore((s) => s.epubTheme === 'dark' && s.info?.kind === 'epub')
   const pageHits = useMemo(() => hitsForPage(findHits, page), [findHits, page])
 
   const ref = useRef<HTMLDivElement>(null)
@@ -83,6 +86,8 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
   const rafPending = useRef(false)
   const lastPoint = useRef<[number, number] | null>(null)
   const [placeRect, setPlaceRect] = useState<Rect | null>(null)
+  /** 글자를 끌어 선택하는 중 — 끝나야 선택 팝업을 띄운다 */
+  const [selecting, setSelecting] = useState(false)
   const [links, setLinks] = useState<LinkInfo[]>([])
   // 텍스트 추가 툴: 페이지 위 인라인 편집기 (page 좌표). edit가 있으면 기존 텍스트 수정.
   const [textDraft, setTextDraft] = useState<
@@ -244,6 +249,7 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
       }
     }
     drag.current = { mode: 'select-text', start: pt, moved: false }
+    setSelecting(true)
     set({ selection: null })
   }
 
@@ -348,6 +354,7 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
   const onPointerUp = async (e: React.PointerEvent): Promise<void> => {
     const d = drag.current
     drag.current = null
+    if (d?.mode === 'select-text') setSelecting(false)
 
     if (d?.mode === 'place-image' && placeRect) {
       const r = placeRect
@@ -468,6 +475,22 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
         ))
       )}
 
+      {noteMarks?.map((m) =>
+        m.rects.map((r, ri) => (
+          <div
+            key={`n${m.id}-${ri}`}
+            className={`note-mark ${m.style}${darkPaper ? ' on-dark' : ''}`}
+            style={{
+              left: r[0] * zoom,
+              top: r[1] * zoom,
+              width: (r[2] - r[0]) * zoom,
+              height: (r[3] - r[1]) * zoom,
+              ['--note' as string]: m.color
+            }}
+          />
+        ))
+      )}
+
       {selBoxes.map((b, i) => (
         <div
           key={i}
@@ -480,6 +503,10 @@ export default function PageView({ page, visible, scale }: Props): React.JSX.Ele
           }}
         />
       ))}
+
+      {tool === 'select' && !selecting && !imgSel && !panMode && selection?.page === page && (
+        <SelectionPopup quads={selection.quads} zoom={zoom} pageWidth={cssW} />
+      )}
 
       {placeRect && (
         <div

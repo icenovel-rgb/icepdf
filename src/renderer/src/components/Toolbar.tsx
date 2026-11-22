@@ -4,6 +4,9 @@ import Icon from './Icon'
 import OcrMenu from './OcrMenu'
 import { openFind } from '../lib/finder'
 import { EPUB_FONT } from '../../../shared/doc-kind'
+import { EPUB_THEMES, NOTE_COLORS, type EpubTheme } from '../../../shared/reading'
+import { setEpubTheme } from '../lib/reading'
+import { toggleChrome } from '../lib/chrome'
 import {
   armImageTool,
   changeEpubFontSize,
@@ -20,8 +23,6 @@ import {
   undo,
   updateSelectedTextStyle
 } from '../lib/actions'
-
-const HIGHLIGHT_COLORS = ['#ffe04d', '#7ee081', '#ff8fb1', '#7ec8ff']
 
 /** 한글까지 그릴 수 있는 시스템 폰트 위주 */
 const TEXT_FONTS = [
@@ -50,6 +51,9 @@ export default function Toolbar(): React.JSX.Element {
   const selectedImage = useStore((s) => s.selectedImage)
   const canUndo = useStore((s) => s.canUndo)
   const canRedo = useStore((s) => s.canRedo)
+  const highlightStyle = useStore((s) => s.highlightStyle)
+  const epubTheme = useStore((s) => s.epubTheme)
+  const chromeHidden = useStore((s) => s.chromeHidden)
   const set = useStore((s) => s.set)
   const gotoPage = useStore((s) => s.gotoPage)
   const [ocrOpen, setOcrOpen] = useState(false)
@@ -142,6 +146,18 @@ export default function Toolbar(): React.JSX.Element {
             <span className="tb-zoom tb-font-size" title="EPUB 본문 글자 크기">{fontSize}pt</span>
             <button className="tb-btn tb-text tb-font-up" disabled={fontSize >= EPUB_FONT.max} onClick={() => void changeEpubFontSize(EPUB_FONT.step)} title="EPUB 글자 크게">가+</button>
           </span>
+          <span className="tb-group tb-themes" title="읽기 테마">
+            {(Object.keys(EPUB_THEMES) as EpubTheme[]).map((t) => (
+              <button
+                key={t}
+                className={`tb-theme theme-${t} ${epubTheme === t ? 'active' : ''}`}
+                onClick={() => void setEpubTheme(t)}
+                title={`${EPUB_THEMES[t].label} 테마`}
+              >
+                가
+              </button>
+            ))}
+          </span>
         </>
       )}
 
@@ -149,12 +165,22 @@ export default function Toolbar(): React.JSX.Element {
 
       <span className="tb-group">
         <button className={`tb-btn ${tool === 'select' ? 'active' : ''}`} disabled={!has} onClick={() => set({ tool: 'select', pendingImage: null })} title="텍스트 선택"><Icon name="select" /></button>
-        <button className={`tb-btn tb-tool-highlight ${tool === 'highlight' ? 'active' : ''}`} disabled={!canEdit} onClick={() => set({ tool: 'highlight', pendingImage: null, selectedImage: null })} title={`형광펜${roTip}`}><Icon name="highlight" /></button>
-        {tool === 'highlight' &&
-          HIGHLIGHT_COLORS.map((c) => (
-            <button key={c} className={`swatch ${highlightColor === c ? 'active' : ''}`} style={{ background: c }} onClick={() => set({ highlightColor: c })} title={c} />
-          ))}
-        <button className={`tb-btn ${tool === 'eraser' ? 'active' : ''}`} disabled={!canEdit} onClick={() => set({ tool: 'eraser', pendingImage: null, selectedImage: null })} title={`지우개 (형광펜/이미지/텍스트 클릭 삭제)${roTip}`}><Icon name="eraser" /></button>
+        <button className={`tb-btn tb-tool-highlight ${tool === 'highlight' ? 'active' : ''}`} disabled={!has} onClick={() => set({ tool: 'highlight', pendingImage: null, selectedImage: null })} title="형광펜 — 드래그한 글자에 밑줄 (선택 도구로 글자를 고르면 위에 뜨는 색을 눌러도 됩니다)"><Icon name="highlight" /></button>
+        {tool === 'highlight' && (
+          <>
+            {NOTE_COLORS.map((c) => (
+              <button key={c} className={`swatch ${highlightColor === c ? 'active' : ''}`} style={{ background: c }} onClick={() => set({ highlightColor: c })} title={c} />
+            ))}
+            <button
+              className={`tb-btn ${highlightStyle === 'underline' ? 'active' : ''}`}
+              onClick={() => set({ highlightStyle: highlightStyle === 'underline' ? 'highlight' : 'underline' })}
+              title={highlightStyle === 'underline' ? '밑줄 모드 (누르면 형광펜)' : '형광펜 모드 (누르면 밑줄)'}
+            >
+              <Icon name="underline" />
+            </button>
+          </>
+        )}
+        <button className={`tb-btn ${tool === 'eraser' ? 'active' : ''}`} disabled={!has} onClick={() => set({ tool: 'eraser', pendingImage: null, selectedImage: null })} title={epub ? '지우개 (밑줄 클릭 삭제)' : '지우개 (형광펜/이미지/텍스트 클릭 삭제)'}><Icon name="eraser" /></button>
         <button className={`tb-btn ${tool === 'text' ? 'active' : ''}`} disabled={!canEdit} onClick={() => set({ tool: 'text', pendingImage: null, selectedImage: null })} title={`텍스트 추가 (페이지 클릭 후 입력 · 추가한 글자는 더블클릭으로 수정)${roTip}`}><Icon name="text" /></button>
         {showTextOpts && (
           <span className="tb-text-opts">
@@ -200,6 +226,7 @@ export default function Toolbar(): React.JSX.Element {
 
       <span className="tb-group">
         <button className="tb-btn" disabled={!has} onClick={() => openFind()} title="찾기 (Ctrl+F)"><Icon name="search" /></button>
+        <button className={`tb-btn ${sidebar === 'notes' ? 'active' : ''}`} disabled={!has} onClick={() => set({ sidebar: sidebar === 'notes' ? null : 'notes' })} title="밑줄 모아보기 (Ctrl+Shift+U)"><Icon name="notes" /></button>
         <button className="tb-btn" disabled={!has} onClick={() => set({ showPrint: true })} title="인쇄 (Ctrl+P)"><Icon name="printer" /></button>
       </span>
 
@@ -221,6 +248,14 @@ export default function Toolbar(): React.JSX.Element {
       </span>
 
       <span className="tb-sep" />
+      <button
+        className="tb-btn tb-hide-chrome"
+        disabled={!has}
+        onClick={() => toggleChrome()}
+        title={chromeHidden ? '도구 고정 (Tab)' : '도구 숨기기 (Tab) — 숨긴 뒤 창 위쪽 끝에 마우스를 대면 잠깐 나타납니다'}
+      >
+        <Icon name={chromeHidden ? 'showChrome' : 'hideChrome'} />
+      </button>
       <button className="tb-btn tb-coffee" onClick={() => set({ showSupport: true })} title="후원하기 (Buy Me a Coffee)">☕</button>
     </div>
   )

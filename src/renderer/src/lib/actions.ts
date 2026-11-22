@@ -6,6 +6,15 @@ import { transformPng, imageNaturalSize, rotatedBBox } from './imgxform'
 import { renderTextToPng, type TextStyle } from './textrender'
 import { parsePageSpec } from './print'
 import {
+  addNoteFromSelection,
+  eraseNoteAt,
+  initReading,
+  loadNotes,
+  rememberNow,
+  resolveEpubNotes,
+  restoreReading
+} from './reading'
+import {
   clearSessionImages,
   getSessionImage,
   registerSessionImage
@@ -99,8 +108,12 @@ export async function openFile(path?: string): Promise<void> {
   const s = store()
   s.set({ busy: '문서 여는 중...' })
   try {
-    const { docId, info } = await api().openDoc(target)
-    s.openTab(docId, info)
+    await initReading() // 저장된 EPUB 테마가 첫 배치부터 적용되게
+    const opened = await api().openDoc(target)
+    const { info, page } = await restoreReading(opened.docId, opened.info)
+    store().openTab(opened.docId, info, page)
+    if (page > 0) store().showToast(`마지막으로 읽던 ${page + 1}쪽부터 이어서 봅니다`)
+    void loadNotes(opened.docId, info)
   } catch (err) {
     s.showToast(`열기 실패: ${err instanceof Error ? err.message : err}`)
   } finally {
@@ -134,6 +147,7 @@ export async function closeTabById(tabId: number): Promise<void> {
     )
     if (!ok) return
   }
+  if (isActive) rememberNow() // 닫기 직전 위치를 바로 기록
   void api().closeDoc(tab.docId)
   store().removeTab(tabId)
 }
@@ -319,6 +333,8 @@ export async function changeEpubFontSize(delta: number): Promise<void> {
     store().updateDoc(docId, (slice) => ({ info: next, epoch: slice.epoch + 1, selection: null, currentPage: page }))
     // 비활성 탭이면 돌아올 때 switchTab이 currentPage로 스크롤한다
     if (store().activeDocId === docId) store().gotoPage(page)
+    // 쪽 나눔이 바뀌었으니 밑줄 위치를 문맥으로 다시 찾는다
+    void resolveEpubNotes(docId)
   } catch (err) {
     s.showToast(`글자 크기 변경 실패: ${err instanceof Error ? err.message : err}`)
   } finally {
@@ -412,32 +428,18 @@ export async function insertFromPdfAt(at: number): Promise<void> {
   }
 }
 
-function hexToRgb(hex: string): [number, number, number] {
-  const n = parseInt(hex.replace('#', ''), 16)
-  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]
-}
-
+/** 형광펜 도구로 드래그한 선택을 밑줄로 — PDF는 주석(원문 포함), EPUB은 서재 기록 */
 export async function highlightSelection(): Promise<void> {
   const s = store()
-  if (!s.selection || !s.selection.quads.length || !ensureEditable()) return
-  try {
-    await eng('addHighlight', {
-      page: s.selection.page,
-      quads: s.selection.quads,
-      color: hexToRgb(s.highlightColor),
-      opacity: 0.45
-    })
-    s.applyEdit(await eng('docInfo', {}))
-    void syncUndoState()
-  } catch (err) {
-    s.showToast(`형광펜 실패: ${err instanceof Error ? err.message : err}`)
-  }
+  if (!s.selection || !s.selection.quads.length) return
+  await addNoteFromSelection(s.highlightColor, s.highlightStyle)
 }
 
 /** 지우개: 클릭 위치의 형광펜/주석 삭제 (#7) */
 export async function eraseAt(page: number, x: number, y: number): Promise<boolean> {
   const s = store()
-  if (!s.info || !ensureEditable()) return false
+  if (!s.info) return false
+  if (s.info.kind === 'epub') return eraseNoteAt(page, x, y)
   try {
     const hit = await eng('hitAnnot', { page, x, y, types: ['Square', 'Highlight', 'Stamp'] })
     if (!hit) return false

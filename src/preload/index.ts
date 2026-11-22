@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { ConvertResult, DocInfo, EngineOpName, EngineOps, MenuAction } from '../shared/types'
 import type { UpdateCheckResult } from '../shared/version'
+import type { BookRecord, EpubNote, LibrarySettings } from '../shared/reading'
 
 const api = {
   engine<K extends EngineOpName>(docId: number, op: K, args: EngineOps[K]['args']): Promise<EngineOps[K]['result']> {
@@ -75,6 +76,37 @@ const api = {
   /** GitHub Releases 최신 버전 확인 — auto=true는 설치본에서만 실제 요청 */
   checkUpdate(auto: boolean): Promise<UpdateCheckResult> {
     return ipcRenderer.invoke('update:check', auto)
+  },
+  // ── 읽기 기록 (읽던 곳·EPUB 밑줄·테마) ──
+  libraryGetBook(key: string): Promise<BookRecord | null> {
+    return ipcRenderer.invoke('library:getBook', key)
+  },
+  libraryPatchBook(key: string, patch: Partial<BookRecord>): Promise<void> {
+    return ipcRenderer.invoke('library:patchBook', key, patch)
+  },
+  /** 밑줄 추가 — 저장된 기록에 합쳐진 전체 목록을 돌려준다 */
+  libraryAddNote(key: string, note: EpubNote): Promise<EpubNote[] | null> {
+    return ipcRenderer.invoke('library:addNote', key, note)
+  },
+  libraryRemoveNote(key: string, id: string): Promise<EpubNote[] | null> {
+    return ipcRenderer.invoke('library:removeNote', key, id)
+  },
+  libraryGetSettings(): Promise<LibrarySettings> {
+    return ipcRenderer.invoke('library:getSettings')
+  },
+  libraryPatchSettings(patch: Partial<LibrarySettings>): Promise<LibrarySettings> {
+    return ipcRenderer.invoke('library:patchSettings', patch)
+  },
+  /** 저장 대화상자 → 바이너리 저장 (문장 카드 PNG). 취소하면 null */
+  saveBinaryFile(opts: { title: string; defaultPath: string; ext: string; extName: string }, data: ArrayBuffer): Promise<string | null> {
+    return ipcRenderer.invoke('file:saveBinary', opts, data)
+  },
+  /** 저장 대화상자 → 텍스트 저장 (밑줄 Markdown). 취소하면 null */
+  saveTextFile(opts: { title: string; defaultPath: string; ext: string; extName: string }, text: string): Promise<string | null> {
+    return ipcRenderer.invoke('file:saveText', opts, text)
+  },
+  copyImage(png: ArrayBuffer): Promise<void> {
+    return ipcRenderer.invoke('clipboard:writeImage', png)
   },
   /** 드래그드롭된 File의 실제 경로 (Electron webUtils) */
   pathForFile(file: File): string {

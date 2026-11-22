@@ -5,6 +5,7 @@
  */
 import { parentPort } from 'node:worker_threads'
 import { readFileSync, writeFileSync, renameSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 import * as mupdf from 'mupdf'
 import type { BookmarkItem, DocInfo, LinkInfo, Quad, Rect } from '../../shared/types'
@@ -13,11 +14,52 @@ import { openEngineDoc, relayoutEpub, type EngineDoc } from './open'
 import { readOutline, writeOutline } from './outline'
 import { searchPages } from './search'
 import { reflowableToPdf } from './reflow-to-pdf'
+import {
+  addPdfHighlight,
+  anchorForQuads,
+  deletePdfHighlight,
+  listPdfHighlights,
+  pageText,
+  readHighlightMeta,
+  resolveNotes,
+  writeHighlightMeta,
+  type HighlightMeta,
+  type PageText
+} from './notes'
+import { EPUB_THEMES, isEpubTheme, pdfDocKey, type NoteStyle } from '../../shared/reading'
+import type { TextAnchor } from '../../shared/anchor'
 
 interface DocState extends EngineDoc {
   path: string | null
+  /** 읽기 기록 키 — EPUB은 내용 해시(옮겨도 유지), PDF는 경로 */
+  key: string
   /** 페이지 구조 변경 시 비워야 하는 캐시 */
   stCache: Map<number, mupdf.StructuredText>
+  /** 밑줄 찾기용 쪽 글자(공백 제거 문자열) — 전 쪽을 훑어도 가볍게 문자열만 (재배치·편집 시 비움) */
+  textCache: Map<number, string>
+  /** 밑줄 표시용 쪽 글자 좌표 — 무거워서 최근 쪽 몇 개만 (재배치·편집 시 비움) */
+  charsCache: Map<number, PageText>
+  /** EPUB 원본 바이트 — 테마를 바꾸면 이걸로 다시 연다 (PDF는 null) */
+  bytes: Uint8Array | null
+  /** 인쇄용 원래 색 사본 (다크·세피아로 읽는 중 인쇄할 때만 만든다) */
+  plain: { doc: mupdf.Document; fontSize: number | null } | null
+}
+
+/** 글자 좌표를 들고 있을 쪽 수 */
+const CHARS_CACHE_PAGES = 16
+
+/**
+ * 현재 EPUB 읽기 테마 CSS (mupdf 전역 setUserCSS).
+ * mupdf는 각 장(chapter)을 **처음 그릴 때의** CSS로 해석해 문서에 붙잡아 두고,
+ * 이미 그린 장은 다시 배치해도(캐시를 비워도) 새 CSS를 반영하지 않는다(스파이크 확인).
+ * 그래서 테마를 바꾸면 EPUB을 원본 바이트에서 새로 연다. 전역 CSS는 평소 항상 themeCss.
+ */
+let themeCss = ''
+
+function openEpub(bytes: Uint8Array, fontSize: number): mupdf.Document {
+  const doc = mupdf.Document.openDocument(bytes, 'application/epub+zip')
+  relayoutEpub(doc, fontSize)
+  return doc
 }
 
 /** 탭별로 열린 문서들 — docId(메인 프로세스 할당)로 키. */
@@ -53,11 +95,96 @@ function writeAtomic(path: string, bytes: Uint8Array): void {
 /** EPUB을 현재 레이아웃 그대로 PDF 바이트로 (변환 저장·Markdown/한글/이미지 내보내기 공용) */
 function epubToPdfBytes(st: DocState): Uint8Array {
   const title = st.doc.getMetaData('info:Title') || (st.path ? basename(st.path).replace(/\.epub$/i, '') : '')
-  return reflowableToPdf(st.doc, title)
+  if (!themeCss || !st.bytes) return reflowableToPdf(st.doc, title)
+  // 다크·세피아 배경이 PDF에 구워지지 않게 원래 색으로 연 사본을 같은 글자 크기로 변환한다.
+  // 장은 그릴 때 CSS를 읽으므로 변환이 끝날 때까지 전역 CSS를 비워 둔다(워커는 단일 스레드).
+  mupdf.setUserCSS('')
+  const plain = openEpub(st.bytes, st.fontSize as number)
+  try {
+    return reflowableToPdf(plain, title)
+  } finally {
+    plain.destroy?.()
+    mupdf.setUserCSS(themeCss)
+  }
 }
 
-function invalidate(docId: number): void {
-  docs.get(docId)?.stCache.clear()
+function invalidate(target: number | DocState): void {
+  const st = typeof target === 'number' ? docs.get(target) : target
+  st?.stCache.clear()
+  st?.textCache.clear()
+  st?.charsCache.clear()
+}
+
+/** 쪽 글자를 뽑고 Page·StructuredText는 바로 해제 (전 쪽을 훑어도 wasm 힙이 쌓이지 않게) */
+function walkPage(st: DocState, page: number): PageText {
+  const p = st.doc.loadPage(page)
+  const stext = p.toStructuredText('preserve-whitespace')
+  try {
+    const pt = pageText(stext)
+    st.textCache.set(page, pt.text)
+    return pt
+  } finally {
+    stext.destroy?.()
+    p.destroy?.()
+  }
+}
+
+/** 밑줄 찾기용 — 공백 뺀 쪽 문자열 (범위 밖이면 '') */
+function textOf(st: DocState, page: number): string {
+  if (page < 0 || page >= st.doc.countPages()) return ''
+  return st.textCache.get(page) ?? walkPage(st, page).text
+}
+
+/** 밑줄 표시용 — 글자 좌표 (범위 밖이면 null). 최근 CHARS_CACHE_PAGES쪽만 보관 */
+function charsOf(st: DocState, page: number): PageText | null {
+  if (page < 0 || page >= st.doc.countPages()) return null
+  const hit = st.charsCache.get(page)
+  if (hit) {
+    st.charsCache.delete(page) // 최근 사용으로 갱신
+    st.charsCache.set(page, hit)
+    return hit
+  }
+  const pt = walkPage(st, page)
+  st.charsCache.set(page, pt)
+  if (st.charsCache.size > CHARS_CACHE_PAGES) st.charsCache.delete(st.charsCache.keys().next().value as number)
+  return pt
+}
+
+function dropPlain(st: DocState): void {
+  st.plain?.doc.destroy?.()
+  st.plain = null
+}
+
+/** 쪽 하나를 PNG로 */
+function renderPage(doc: mupdf.Document, page: number, scale: number) {
+  const p = doc.loadPage(page)
+  const pix = p.toPixmap(mupdf.Matrix.scale(scale, scale), mupdf.ColorSpace.DeviceRGB, false, true)
+  const png = pix.asPNG()
+  const result = { png: png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength), width: pix.getWidth(), height: pix.getHeight() }
+  pix.destroy()
+  p.destroy?.()
+  return result
+}
+
+/**
+ * 원래 색으로 렌더 (EPUB 다크·세피아로 읽는 중 인쇄할 때). 사본은 장을 그릴 때 CSS를 읽으므로
+ * 렌더하는 동안 전역 CSS를 비운다(워커는 단일 스레드라 다른 연산과 섞이지 않는다).
+ */
+function renderPlain(st: DocState, page: number, scale: number) {
+  mupdf.setUserCSS('')
+  try {
+    if (!st.plain || st.plain.fontSize !== st.fontSize) {
+      dropPlain(st)
+      st.plain = { doc: openEpub(st.bytes as Uint8Array, st.fontSize as number), fontSize: st.fontSize }
+    }
+    return renderPage(st.plain.doc, page, scale)
+  } finally {
+    mupdf.setUserCSS(themeCss)
+  }
+}
+
+function docKeyFor(path: string, kind: string, bytes: Uint8Array): string {
+  return kind === 'epub' ? 'epub:' + createHash('sha1').update(bytes).digest('hex') : pdfDocKey(path)
 }
 
 /**
@@ -113,7 +240,8 @@ function docInfo(docId: number): DocInfo {
     outline: readOutline(doc),
     title: st.path ? basename(st.path) : '제목 없음',
     kind: st.kind,
-    fontSize: st.fontSize
+    fontSize: st.fontSize,
+    key: st.key
   }
 }
 
@@ -121,10 +249,61 @@ function docInfo(docId: number): DocInfo {
 
 const ops: Record<string, (docId: number, args: any) => unknown> = {
   open(docId, { path }: { path: string }) {
-    docs.get(docId)?.doc.destroy?.()
-    const opened = openEngineDoc(path, readFileSync(path))
-    docs.set(docId, { ...opened, path, stCache: new Map() })
+    const prev = docs.get(docId)
+    if (prev) dropPlain(prev)
+    prev?.doc.destroy?.()
+    const bytes = readFileSync(path)
+    const opened = openEngineDoc(path, bytes)
+    const key = docKeyFor(path, opened.kind, bytes)
+    const epubBytes = opened.kind === 'epub' ? bytes : null
+    docs.set(docId, {
+      ...opened,
+      path,
+      key,
+      stCache: new Map(),
+      textCache: new Map(),
+      charsCache: new Map(),
+      bytes: epubBytes,
+      plain: null
+    })
     return docInfo(docId)
+  },
+
+  /** EPUB 읽기 테마 — mupdf 전역 CSS를 바꾸고 열린 EPUB을 모두 다시 배치(색만 바뀌어 쪽 수는 그대로) */
+  setTheme(_docId, { theme }: { theme: string }) {
+    if (!isEpubTheme(theme)) throw new Error('알 수 없는 테마입니다')
+    themeCss = EPUB_THEMES[theme].css
+    mupdf.setUserCSS(themeCss)
+    for (const st of docs.values()) {
+      if (st.kind !== 'epub' || !st.bytes) continue
+      const old = st.doc
+      st.doc = openEpub(st.bytes, st.fontSize as number)
+      old.destroy?.()
+      invalidate(st)
+    }
+    return null
+  },
+
+  /** 선택 영역 → 밑줄 앵커 (EPUB) */
+  noteAnchor(docId, { page, quads }: { page: number; quads: Quad[] }) {
+    const st = requireState(docId)
+    return anchorForQuads((p) => textOf(st, p), (p) => charsOf(st, p), page, st.doc.countPages(), quads)
+  },
+
+  /** 저장된 앵커들을 현재 레이아웃에서 찾아 쪽별 사각형으로 (EPUB) */
+  resolveNotes(docId, { notes }: { notes: { id: string; anchor: TextAnchor }[] }) {
+    const st = requireState(docId)
+    return resolveNotes((p) => textOf(st, p), (p) => charsOf(st, p), st.doc.countPages(), notes)
+  },
+
+  /** PDF 형광펜 그룹 목록 (모아보기) — EPUB은 빈 목록 */
+  listHighlights(docId) {
+    const pdf = requireState(docId).pdf
+    return pdf ? listPdfHighlights(pdf) : []
+  },
+
+  deleteHighlight(docId, { id }: { id: string }) {
+    return mutate(docId, 'delete-highlight', () => ({ removed: deletePdfHighlight(requireDoc(docId), id) }))
   },
 
   docInfo(docId) {
@@ -146,13 +325,11 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
     return { path, pageCount: st.doc.countPages() }
   },
 
-  render(docId, { page, scale }: { page: number; scale: number }) {
-    const p = requireAny(docId).loadPage(page)
-    const pix = p.toPixmap(mupdf.Matrix.scale(scale, scale), mupdf.ColorSpace.DeviceRGB, false, true)
-    const png = pix.asPNG()
-    const result = { png: png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength), width: pix.getWidth(), height: pix.getHeight() }
-    pix.destroy()
-    return result
+  render(docId, { page, scale, plain }: { page: number; scale: number; plain?: boolean }) {
+    const st = requireState(docId)
+    // plain = 인쇄 — 다크·세피아 테마여도 종이에는 원래 색으로
+    if (plain && st.kind === 'epub' && themeCss && st.bytes) return renderPlain(st, page, scale)
+    return renderPage(st.doc, page, scale)
   },
 
   selection(docId, { page, ax, ay, bx, by }: { page: number; ax: number; ay: number; bx: number; by: number }) {
@@ -166,24 +343,23 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
     return searchPages(requireAny(docId), needle, from, to, maxHits)
   },
 
-  addHighlight(docId, { page, quads, color, opacity }: { page: number; quads: Quad[]; color: [number, number, number]; opacity: number }) {
+  addHighlight(
+    docId,
+    args: { page: number; quads: Quad[]; color: [number, number, number]; opacity: number; style?: NoteStyle; text?: string; id?: string }
+  ) {
     return mutate(docId, 'highlight', () => {
-      const p = requireDoc(docId).loadPage(page)
       // mupdf Highlight 주석은 끝이 둥글다 → quad별 테두리 없는 Square로 각진 형광펜 구현
-      for (const q of quads) {
-        const x0 = Math.min(q[0], q[4])
-        const y0 = Math.min(q[1], q[3])
-        const x1 = Math.max(q[2], q[6])
-        const y1 = Math.max(q[5], q[7])
-        const annot = p.createAnnotation('Square')
-        annot.setRect([x0, y0, x1, y1])
-        annot.setColor([]) // 테두리 없음
-        annot.setInteriorColor(color)
-        annot.setBorderWidth(0)
-        annot.setOpacity(opacity)
-        annot.update()
-      }
-      return { count: p.getAnnotations().length }
+      const pdf = requireDoc(docId)
+      const id = args.id ?? `hl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      addPdfHighlight(pdf, args.page, {
+        quads: args.quads,
+        color: args.color,
+        opacity: args.opacity,
+        style: args.style ?? 'highlight',
+        text: args.text ?? '',
+        id
+      })
+      return { count: pdf.loadPage(args.page).getAnnotations().length, id }
     })
   },
 
@@ -333,12 +509,20 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
       // 모든 주석을 복원 레시피로 스냅샷 — Square는 속성으로 정확 복원, 그 외(Stamp 등)는
       // 현재 모습을 고해상도로 래스터화해 Stamp로 재생성(mupdf는 주석 페인트 순서를 못 바꿈).
       type Recipe =
-        | { kind: 'square'; rect: Rect; interior: number[]; opacity: number; border: number }
+        | { kind: 'square'; rect: Rect; interior: number[]; opacity: number; border: number; meta: HighlightMeta }
         | { kind: 'stamp'; rect: Rect; png: Uint8Array }
       const recipes: Recipe[] = annots.map((a) => {
         const rect = a.getBounds() as unknown as Rect
         if (a.getType() === 'Square') {
-          return { kind: 'square', rect, interior: a.getInteriorColor() as number[], opacity: a.getOpacity(), border: a.getBorderWidth() }
+          // 형광펜 원문·그룹·스타일도 옮겨야 모아보기에서 사라지지 않는다
+          return {
+            kind: 'square',
+            rect,
+            interior: a.getInteriorColor() as number[],
+            opacity: a.getOpacity(),
+            border: a.getBorderWidth(),
+            meta: readHighlightMeta(a)
+          }
         }
         const pix = a.toPixmap(mupdf.Matrix.scale(REORDER_SCALE, REORDER_SCALE), mupdf.ColorSpace.DeviceRGB, true)
         const png = pix.asPNG()
@@ -358,6 +542,7 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
           a.setInteriorColor(r.interior as [number, number, number])
           a.setBorderWidth(r.border)
           a.setOpacity(r.opacity)
+          writeHighlightMeta(requireDoc(docId), a, r.meta)
           a.update()
         } else {
           const a = p.createAnnotation('Stamp')
@@ -392,7 +577,8 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
     const st = requireState(docId)
     writeAtomic(path, requireDoc(docId).saveToBuffer('garbage=compact').asUint8Array())
     st.path = path
-    return { path }
+    st.key = pdfDocKey(path)
+    return { path, key: st.key }
   },
 
   /** 변환(kordoc)·이미지 내보내기용 PDF 바이트 — EPUB은 현재 레이아웃을 PDF로 구워서 준다 */
@@ -403,7 +589,9 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
   },
 
   close(docId) {
-    docs.get(docId)?.doc.destroy?.()
+    const st = docs.get(docId)
+    if (st) dropPlain(st)
+    st?.doc.destroy?.()
     docs.delete(docId)
     return null
   }
