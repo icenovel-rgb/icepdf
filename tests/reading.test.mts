@@ -54,9 +54,16 @@ const notes = sanitizeBookPatch({
 })
 check('밑줄: 올바른 것만 남김', notes.notes?.length === 1 && notes.notes[0].id === 'n1', JSON.stringify(notes.notes))
 check('설정 검증', sanitizeSettings({ epubTheme: 'dark', x: 1 }).epubTheme === 'dark' && sanitizeSettings({ epubTheme: 'neon' }).epubTheme === undefined)
+check('글꼴 설정: 가족 이름·빈 값 통과', sanitizeSettings({ epubFont: 'Batang' }).epubFont === 'Batang' && sanitizeSettings({ epubFont: '' }).epubFont === '')
+check(
+  '글꼴 설정: 숫자·너무 긴 값·제어 문자 거부',
+  sanitizeSettings({ epubFont: 3 }).epubFont === undefined &&
+    sanitizeSettings({ epubFont: 'x'.repeat(201) }).epubFont === undefined &&
+    sanitizeSettings({ epubFont: 'a\nb' }).epubFont === undefined
+)
 
 // ── 손상된 파일도 열린다 ──
-check('null → 빈 서재', Object.keys(parseLibrary(null).books).length === 0 && parseLibrary(null).settings.epubTheme === 'light')
+check('null → 빈 서재', Object.keys(parseLibrary(null).books).length === 0 && parseLibrary(null).settings.epubTheme === 'light' && parseLibrary(null).settings.epubFont === '')
 const lib = parseLibrary({ version: 1, settings: { epubTheme: 'sepia' }, books: { k: { lastPage: 2, pageCount: 5, title: 't' }, bad: 7 } })
 check('정상 책만 로드 + 설정 유지', !!lib.books.k && !lib.books.bad && lib.settings.epubTheme === 'sepia', JSON.stringify(lib))
 

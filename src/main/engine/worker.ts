@@ -8,7 +8,7 @@ import { readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 import * as mupdf from 'mupdf'
-import type { BookmarkItem, DocInfo, LinkInfo, Quad, Rect } from '../../shared/types'
+import type { BookmarkItem, DocInfo, LinkInfo, Quad, ReadingFontFaces, Rect, RelaidDoc } from '../../shared/types'
 import { EPUB_PAGE } from '../../shared/doc-kind'
 import { openEngineDoc, relayoutEpub, type EngineDoc } from './open'
 import { readOutline, writeOutline } from './outline'
@@ -26,7 +26,15 @@ import {
   type HighlightMeta,
   type PageText
 } from './notes'
-import { EPUB_THEMES, isEpubTheme, pdfDocKey, type NoteStyle } from '../../shared/reading'
+import {
+  EPUB_THEMES,
+  READING_FONT_FAMILY,
+  isEpubTheme,
+  pdfDocKey,
+  readingFontCss,
+  type NoteStyle,
+  type ReadingFontFile
+} from '../../shared/reading'
 import type { TextAnchor } from '../../shared/anchor'
 
 interface DocState extends EngineDoc {
@@ -55,6 +63,72 @@ const CHARS_CACHE_PAGES = 16
  * 그래서 테마를 바꾸면 EPUB을 원본 바이트에서 새로 연다. 전역 CSS는 평소 항상 themeCss.
  */
 let themeCss = ''
+
+/**
+ * EPUB 읽기 글꼴 — CSS가 가상 가족 이름(READING_FONT_FAMILY)을 요청하면 이 글꼴을 돌려준다.
+ * 글꼴은 쪽 나눔을 바꾸므로 색(themeCss)과 달리 원래 색 사본(인쇄·PDF 변환)에도 그대로 쓴다.
+ */
+let readingFont: ReadingFaces | null = null
+let fontCss = ''
+
+const userCss = (): string => fontCss + themeCss
+
+mupdf.installLoadFontFunction((name, _script, bold) => {
+  if (name !== READING_FONT_FAMILY || !readingFont) return null
+  // 굵은 면이 없는 글꼴은 보통 면으로 (mupdf.js에는 가짜 굵게가 없다)
+  return (bold && readingFont.bold) || readingFont.regular
+})
+
+const FONT_FILE = /\.(ttf|otf|ttc|otc)$/i
+
+type ReadingFaces = { regular: mupdf.Font; bold: mupdf.Font | null }
+
+function loadFontFile(f: ReadingFontFile, bytes: Map<string, Uint8Array>): mupdf.Font {
+  if (typeof f?.path !== 'string' || !FONT_FILE.test(f.path)) throw new Error('글꼴 파일이 아닙니다')
+  const index = Number.isInteger(f.index) && f.index >= 0 ? f.index : 0
+  // 보통·굵게가 한 TTC에 든 글꼴은 파일을 한 번만 읽는다
+  const data = bytes.get(f.path) ?? readFileSync(f.path)
+  bytes.set(f.path, data)
+  return new mupdf.Font(READING_FONT_FAMILY, data, index)
+}
+
+/** 보통 면은 꼭 필요하고, 굵게 면을 못 읽으면(지워짐·깨짐) 보통 면으로 대신한다 */
+function loadReadingFaces(font: ReadingFontFaces): ReadingFaces {
+  const bytes = new Map<string, Uint8Array>()
+  const regular = loadFontFile(font.regular, bytes)
+  let bold: mupdf.Font | null = null
+  try {
+    bold = font.bold ? loadFontFile(font.bold, bytes) : null
+  } catch (err) {
+    console.warn('굵은 글꼴을 읽지 못해 보통 글꼴로 대신합니다:', err)
+  }
+  return { regular, bold }
+}
+
+function destroyFaces(f: ReadingFaces | null): void {
+  f?.regular.destroy?.()
+  f?.bold?.destroy?.()
+}
+
+/** 전역 글꼴을 바꾸고 열린 EPUB을 다시 연다 */
+function applyReadingFont(next: ReadingFaces | null): void {
+  readingFont = next
+  fontCss = next ? readingFontCss() : ''
+  mupdf.setUserCSS(userCss())
+  reopenEpubs()
+}
+
+/** 열린 EPUB을 원본 바이트로 다시 연다 — 바뀐 전역 CSS(테마·글꼴)는 새로 연 문서에만 온전히 먹는다 */
+function reopenEpubs(): void {
+  for (const st of docs.values()) {
+    if (st.kind !== 'epub' || !st.bytes) continue
+    const old = st.doc
+    st.doc = openEpub(st.bytes, st.fontSize as number)
+    old.destroy?.()
+    dropPlain(st) // 원래 색 사본도 새 글꼴로 다시 만든다
+    invalidate(st)
+  }
+}
 
 function openEpub(bytes: Uint8Array, fontSize: number): mupdf.Document {
   const doc = mupdf.Document.openDocument(bytes, 'application/epub+zip')
@@ -97,19 +171,21 @@ function epubToPdfBytes(st: DocState): Uint8Array {
   const title = st.doc.getMetaData('info:Title') || (st.path ? basename(st.path).replace(/\.epub$/i, '') : '')
   if (!themeCss || !st.bytes) return reflowableToPdf(st.doc, title)
   // 다크·세피아 배경이 PDF에 구워지지 않게 원래 색으로 연 사본을 같은 글자 크기로 변환한다.
-  // 장은 그릴 때 CSS를 읽으므로 변환이 끝날 때까지 전역 CSS를 비워 둔다(워커는 단일 스레드).
-  mupdf.setUserCSS('')
-  const plain = openEpub(st.bytes, st.fontSize as number)
+  // 장은 그릴 때 CSS를 읽으므로 변환이 끝날 때까지 전역 CSS를 글꼴만 남겨 둔다(워커는 단일 스레드).
+  mupdf.setUserCSS(fontCss)
+  let plain: mupdf.Document | null = null
   try {
+    plain = openEpub(st.bytes, st.fontSize as number)
     return reflowableToPdf(plain, title)
   } finally {
-    plain.destroy?.()
-    mupdf.setUserCSS(themeCss)
+    plain?.destroy?.()
+    mupdf.setUserCSS(userCss())
   }
 }
 
 function invalidate(target: number | DocState): void {
   const st = typeof target === 'number' ? docs.get(target) : target
+  for (const text of st?.stCache.values() ?? []) text.destroy?.()
   st?.stCache.clear()
   st?.textCache.clear()
   st?.charsCache.clear()
@@ -171,7 +247,7 @@ function renderPage(doc: mupdf.Document, page: number, scale: number) {
  * 렌더하는 동안 전역 CSS를 비운다(워커는 단일 스레드라 다른 연산과 섞이지 않는다).
  */
 function renderPlain(st: DocState, page: number, scale: number) {
-  mupdf.setUserCSS('')
+  mupdf.setUserCSS(fontCss)
   try {
     if (!st.plain || st.plain.fontSize !== st.fontSize) {
       dropPlain(st)
@@ -179,8 +255,27 @@ function renderPlain(st: DocState, page: number, scale: number) {
     }
     return renderPage(st.plain.doc, page, scale)
   } finally {
-    mupdf.setUserCSS(themeCss)
+    mupdf.setUserCSS(userCss())
   }
+}
+
+/** 쪽의 링크 — 내부 링크만 목표 쪽으로 해석 (외부 URL은 -1) */
+function linksOf(doc: mupdf.Document, p: mupdf.Page): LinkInfo[] {
+  return p.getLinks().map((l) => {
+    const uri = l.getURI()
+    const external = l.isExternal()
+    const [x0, y0, x1, y1] = l.getBounds() as unknown as Rect
+    let target = -1
+    if (!external) {
+      try {
+        const r = doc.resolveLink(uri)
+        target = typeof r === 'number' && r >= 0 ? r : -1
+      } catch {
+        target = -1
+      }
+    }
+    return { rect: [x0, y0, x1, y1] as Rect, uri, external, page: target }
+  })
 }
 
 function docKeyFor(path: string, kind: string, bytes: Uint8Array): string {
@@ -214,9 +309,14 @@ function getStructuredText(docId: number, page: number): mupdf.StructuredText {
   const st = requireState(docId)
   const cached = st.stCache.get(page)
   if (cached) return cached
-  const text = st.doc.loadPage(page).toStructuredText('preserve-whitespace')
-  st.stCache.set(page, text)
-  return text
+  const p = st.doc.loadPage(page)
+  try {
+    const text = p.toStructuredText('preserve-whitespace')
+    st.stCache.set(page, text)
+    return text
+  } finally {
+    p.destroy?.() // StructuredText는 쪽과 따로 산다 — 쪽은 바로 놓아 문서를 붙잡지 않게
+  }
 }
 
 function docInfo(docId: number): DocInfo {
@@ -273,15 +373,35 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
   setTheme(_docId, { theme }: { theme: string }) {
     if (!isEpubTheme(theme)) throw new Error('알 수 없는 테마입니다')
     themeCss = EPUB_THEMES[theme].css
-    mupdf.setUserCSS(themeCss)
-    for (const st of docs.values()) {
-      if (st.kind !== 'epub' || !st.bytes) continue
-      const old = st.doc
-      st.doc = openEpub(st.bytes, st.fontSize as number)
-      old.destroy?.()
-      invalidate(st)
-    }
+    mupdf.setUserCSS(userCss())
+    reopenEpubs()
     return null
+  },
+
+  /**
+   * EPUB 본문 글꼴 — 전역. 글꼴이 바뀌면 쪽 나눔이 바뀌므로 열린 EPUB을 모두 다시 열고
+   * 각 문서의 새 정보를 돌려준다(렌더러가 탭마다 쪽 위치·밑줄을 다시 맞춘다).
+   */
+  setReadingFont(_docId, { font }: { font: ReadingFontFaces | null }): RelaidDoc[] {
+    // 파일을 먼저 읽어 실패하면(지워졌거나 깨짐) 지금 글꼴을 그대로 둔다
+    const next = font ? loadReadingFaces(font) : null
+    const prev = readingFont
+    try {
+      applyReadingFont(next)
+      const relaid = [...docs.entries()].filter(([, st]) => st.kind === 'epub').map(([docId]) => ({ docId, info: docInfo(docId) }))
+      destroyFaces(prev)
+      mupdf.emptyStore() // 옛 글꼴의 글리프 캐시를 비운다
+      return relaid
+    } catch (err) {
+      // 다시 여는 도중 실패(메모리 부족 등) — 렌더러가 아는 상태(이전 글꼴)로 되돌린다
+      try {
+        applyReadingFont(prev)
+      } catch (revertErr) {
+        console.error('이전 글꼴로 되돌리기 실패:', revertErr)
+      }
+      destroyFaces(next)
+      throw err
+    }
   },
 
   /** 선택 영역 → 밑줄 앵커 (EPUB) */
@@ -412,22 +532,11 @@ const ops: Record<string, (docId: number, args: any) => unknown> = {
   getLinks(docId, { page }: { page: number }): LinkInfo[] {
     const doc = requireAny(docId)
     const p = doc.loadPage(page)
-    return p.getLinks().map((l) => {
-      const uri = l.getURI()
-      const external = l.isExternal()
-      const [x0, y0, x1, y1] = l.getBounds() as unknown as Rect
-      // 내부 링크만 페이지로 해석 (외부 URL은 resolveLink가 -1)
-      let target = -1
-      if (!external) {
-        try {
-          const r = doc.resolveLink(uri)
-          target = typeof r === 'number' && r >= 0 ? r : -1
-        } catch {
-          target = -1
-        }
-      }
-      return { rect: [x0, y0, x1, y1] as Rect, uri, external, page: target }
-    })
+    try {
+      return linksOf(doc, p)
+    } finally {
+      p.destroy?.()
+    }
   },
 
   hitAnnot(docId, { page, x, y, types }: { page: number; x: number; y: number; types?: string[] }) {
@@ -606,8 +715,8 @@ interface RpcRequest {
 
 parentPort?.on('message', (msg: RpcRequest) => {
   try {
-    const fn = ops[msg.op]
-    if (!fn) throw new Error(`알 수 없는 연산: ${msg.op}`)
+    const fn = typeof msg.op === 'string' && Object.hasOwn(ops, msg.op) ? ops[msg.op] : undefined
+    if (!fn) throw new Error(`알 수 없는 연산: ${String(msg.op)}`)
     const result = fn(msg.docId, msg.args ?? {})
     const transfer: ArrayBuffer[] = []
     if (result && typeof result === 'object') {

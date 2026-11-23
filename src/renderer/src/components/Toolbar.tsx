@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useStore } from '../state/store'
 import Icon from './Icon'
 import OcrMenu from './OcrMenu'
+import PageInput from './PageInput'
+import EpubFontSelect from './EpubFontSelect'
 import { openFind } from '../lib/finder'
 import { EPUB_FONT } from '../../../shared/doc-kind'
 import { EPUB_THEMES, NOTE_COLORS, type EpubTheme } from '../../../shared/reading'
@@ -102,18 +104,7 @@ export default function Toolbar(): React.JSX.Element {
 
       <span className="tb-group">
         <button className="tb-btn" disabled={!has || currentPage <= 0} onClick={() => gotoPage(currentPage - 1)} title="이전 쪽"><Icon name="prev" /></button>
-        <input
-          className="tb-page"
-          disabled={!has}
-          type="number"
-          min={1}
-          max={info?.pageCount ?? 1}
-          value={has ? currentPage + 1 : ''}
-          onChange={(e) => {
-            const v = Number(e.target.value) - 1
-            if (info && v >= 0 && v < info.pageCount) gotoPage(v)
-          }}
-        />
+        <PageInput />
         <span className="tb-total">/ {info?.pageCount ?? '-'}</span>
         <button className="tb-btn" disabled={!has || !info || currentPage >= info.pageCount - 1} onClick={() => gotoPage(currentPage + 1)} title="다음 쪽"><Icon name="next" /></button>
       </span>
@@ -145,6 +136,7 @@ export default function Toolbar(): React.JSX.Element {
             <button className="tb-btn tb-text tb-font-down" disabled={fontSize <= EPUB_FONT.min} onClick={() => void changeEpubFontSize(-EPUB_FONT.step)} title="EPUB 글자 작게">가−</button>
             <span className="tb-zoom tb-font-size" title="EPUB 본문 글자 크기">{fontSize}pt</span>
             <button className="tb-btn tb-text tb-font-up" disabled={fontSize >= EPUB_FONT.max} onClick={() => void changeEpubFontSize(EPUB_FONT.step)} title="EPUB 글자 크게">가+</button>
+            <EpubFontSelect />
           </span>
           <span className="tb-group tb-themes" title="읽기 테마">
             {(Object.keys(EPUB_THEMES) as EpubTheme[]).map((t) => (
@@ -233,7 +225,7 @@ export default function Toolbar(): React.JSX.Element {
       {epub && (
         <>
           <span className="tb-sep" />
-          <button className="tb-btn tb-text tb-convert-pdf" onClick={() => void convertEpubToPdf()} title="EPUB을 PDF로 변환하여 저장 (현재 글자 크기 기준 · 텍스트·목차·링크 유지)">
+          <button className="tb-btn tb-text tb-convert-pdf" onClick={() => void convertEpubToPdf()} title="EPUB을 PDF로 변환하여 저장 (현재 글자 크기·글꼴 기준 · 텍스트·목차·링크 유지)">
             <Icon name="download" /> PDF 변환
           </button>
         </>

@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { ConvertResult, DocInfo, EngineOpName, EngineOps, MenuAction } from '../shared/types'
+import type { ConvertResult, DocInfo, EngineOpName, EngineOps, MenuAction, RelaidDoc } from '../shared/types'
 import type { UpdateCheckResult } from '../shared/version'
-import type { BookRecord, EpubNote, LibrarySettings } from '../shared/reading'
+import type { BookRecord, EpubNote, LibrarySettings, ReadingFontOption } from '../shared/reading'
 
 const api = {
   engine<K extends EngineOpName>(docId: number, op: K, args: EngineOps[K]['args']): Promise<EngineOps[K]['result']> {
@@ -96,6 +96,14 @@ const api = {
   },
   libraryPatchSettings(patch: Partial<LibrarySettings>): Promise<LibrarySettings> {
     return ipcRenderer.invoke('library:patchSettings', patch)
+  },
+  /** 설치된 한글 글꼴 (EPUB 읽기 글꼴 고르기) */
+  listReadingFonts(): Promise<ReadingFontOption[]> {
+    return ipcRenderer.invoke('fonts:list')
+  },
+  /** EPUB 본문 글꼴 적용 ('' = 책 기본) — 열린 EPUB들을 다시 나눈 결과 */
+  setEpubFont(id: string): Promise<RelaidDoc[]> {
+    return ipcRenderer.invoke('epub:setFont', id)
   },
   /** 저장 대화상자 → 바이너리 저장 (문장 카드 PNG). 취소하면 null */
   saveBinaryFile(opts: { title: string; defaultPath: string; ext: string; extName: string }, data: ArrayBuffer): Promise<string | null> {

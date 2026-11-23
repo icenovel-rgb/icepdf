@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { DocInfo, Quad, Rect, SearchHit } from '../../../shared/types'
 import type { FindStatus } from '../lib/find'
 import type { LatestRelease } from '../../../shared/version'
-import type { EpubNote, EpubTheme, NoteItem, NoteMark, NoteStyle } from '../../../shared/reading'
+import type { EpubNote, EpubTheme, NoteItem, NoteMark, NoteStyle, ReadingFontOption } from '../../../shared/reading'
 
 export type Tool = 'select' | 'highlight' | 'eraser' | 'image' | 'text'
 export type ViewMode = 'scroll' | 'grid' | 'slide'
@@ -159,6 +159,10 @@ interface AppState extends DocSlice {
   chromePeek: boolean
   /** EPUB 읽기 테마 (앱 전역 — mupdf CSS가 전역이라 열린 EPUB 전체에 적용) */
   epubTheme: EpubTheme
+  /** EPUB 본문 글꼴 가족 이름 ('' = 책 기본 글꼴, 앱 전역) */
+  epubFont: string
+  /** 설치된 한글 글꼴 목록 — 처음 EPUB을 볼 때 불러온다 (null = 아직) */
+  readingFonts: ReadingFontOption[] | null
   /** 새 밑줄 스타일 (형광/밑줄) */
   highlightStyle: NoteStyle
   /** 문장 카드 편집 창 — null이면 닫힘 */
@@ -244,6 +248,8 @@ export const useStore = create<AppState>((set, get) => ({
   fullscreen: false,
   chromePeek: false,
   epubTheme: 'light',
+  epubFont: '',
+  readingFonts: null,
   highlightStyle: 'highlight',
   cardDraft: null,
   ocrLayers: {},

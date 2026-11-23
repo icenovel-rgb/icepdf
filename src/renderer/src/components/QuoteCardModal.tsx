@@ -1,10 +1,19 @@
 /**
- * 문장 카드 편집 창 — 배경(이미지 8장 + 단색)·비율·글꼴·크기·정렬·글자색·막·출처를 고르면
- * 미리보기가 바로 바뀌고, PNG로 저장하거나 클립보드에 복사한다.
+ * 문장 카드 편집 창 — 배경(이미지 20장 + 단색)·비율·글꼴·크기·정렬·글자색·막·출처(정렬 따로)를
+ * 고르면 미리보기가 바로 바뀌고, PNG로 저장하거나 클립보드에 복사한다.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../state/store'
-import { CARD_RATIOS, cardSize, drawCard, type CardAlign, type CardRatio } from '../lib/quote-card'
+import {
+  CARD_ALIGNS,
+  CARD_RATIOS,
+  SOURCE_ALIGNS,
+  cardSize,
+  drawCard,
+  type CardAlign,
+  type CardRatio,
+  type SourceAlign
+} from '../lib/quote-card'
 import { CARD_BACKGROUNDS, availableCardFonts } from '../lib/card-presets'
 
 /** 배경 이미지 캐시 — 창을 다시 열어도 다시 내려받지 않게 */
@@ -42,6 +51,7 @@ export default function QuoteCardModal(): React.JSX.Element | null {
   const [font, setFont] = useState('Batang')
   const [fontSize, setFontSize] = useState(60)
   const [align, setAlign] = useState<CardAlign>('left')
+  const [sourceAlign, setSourceAlign] = useState<SourceAlign>('right')
   const [ink, setInk] = useState(CARD_BACKGROUNDS[0].ink)
   const [shade, setShade] = useState(CARD_BACKGROUNDS[0].shade)
   const [loaded, setLoaded] = useState(0)
@@ -77,10 +87,11 @@ export default function QuoteCardModal(): React.JSX.Element | null {
       font,
       maxFontSize: fontSize,
       align,
+      sourceAlign,
       text,
       source
     })
-  }, [draft, text, source, bg, ratio, font, fontSize, align, ink, shade, loaded])
+  }, [draft, text, source, bg, ratio, font, fontSize, align, sourceAlign, ink, shade, loaded])
 
   if (!draft) return null
 
@@ -160,24 +171,25 @@ export default function QuoteCardModal(): React.JSX.Element | null {
               ))}
             </div>
           </div>
-          <div className="card-row">
-            <label className="card-field">
-              <span>글꼴</span>
-              <select value={font} onChange={(e) => setFont(e.target.value)}>
-                {fonts.map((f) => (
-                  <option key={f.value} value={f.value}>
-                    {f.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="card-field">
-              <span>정렬</span>
-              <div className="card-seg">
-                <button className={align === 'left' ? 'active' : ''} onClick={() => setAlign('left')}>왼쪽</button>
-                <button className={align === 'center' ? 'active' : ''} onClick={() => setAlign('center')}>가운데</button>
-              </div>
-            </label>
+          <label className="card-field">
+            <span>글꼴</span>
+            <select value={font} onChange={(e) => setFont(e.target.value)}>
+              {fonts.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="card-field">
+            <span>문장 정렬</span>
+            <div className="card-seg card-align">
+              {CARD_ALIGNS.map((a) => (
+                <button key={a.id} className={align === a.id ? 'active' : ''} onClick={() => setAlign(a.id)}>
+                  {a.label}
+                </button>
+              ))}
+            </div>
           </div>
           <label className="card-field">
             <span>최대 글자 크기 {fontSize}px <small>(길면 자동으로 줄어듭니다)</small></span>
@@ -193,10 +205,17 @@ export default function QuoteCardModal(): React.JSX.Element | null {
               <input type="range" min={0} max={0.7} step={0.02} value={shade} onChange={(e) => setShade(Number(e.target.value))} />
             </label>
           </div>
-          <label className="card-field">
+          <div className="card-field">
             <span>출처</span>
             <input type="text" value={source} placeholder="비우면 출처 없이" onChange={(e) => setSource(e.target.value)} />
-          </label>
+            <div className="card-seg card-source-align" title="출처 정렬">
+              {SOURCE_ALIGNS.map((a) => (
+                <button key={a.id} className={sourceAlign === a.id ? 'active' : ''} disabled={!source.trim()} onClick={() => setSourceAlign(a.id)}>
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="card-actions">
             <button className="primary" onClick={() => void save()}>이미지 저장</button>
             <button onClick={() => void copy()}>클립보드 복사</button>

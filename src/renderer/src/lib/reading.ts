@@ -5,7 +5,7 @@
  */
 import { useStore, type DocSlice } from '../state/store'
 import { clearDocImages } from './images'
-import { docBaseName } from '../../../shared/doc-kind'
+import { docBaseName, mapPageAfterRelayout } from '../../../shared/doc-kind'
 import {
   hexToRgb,
   notesToMarkdown,
@@ -17,7 +17,7 @@ import {
   type NoteMark,
   type NoteStyle
 } from '../../../shared/reading'
-import type { DocInfo, ResolvedNoteInfo } from '../../../shared/types'
+import type { DocInfo, RelaidDoc, ResolvedNoteInfo } from '../../../shared/types'
 
 const api = (): typeof window.icepdf => window.icepdf
 const store = (): ReturnType<typeof useStore.getState> => useStore.getState()
@@ -45,8 +45,21 @@ async function start(): Promise<void> {
       await api().engine(store().activeDocId, 'setTheme', { theme: settings.epubTheme })
     }
     store().set({ epubTheme: settings.epubTheme })
+    await restoreEpubFont(settings.epubFont)
   } catch (err) {
     console.error('읽기 설정 불러오기 실패:', err)
+  }
+}
+
+/** 저장된 읽기 글꼴 — 문서를 열기 전에 걸어 둔다(글꼴이 쪽 나눔을 바꾸므로). 지워진 글꼴이면 이번엔 기본으로 */
+async function restoreEpubFont(epubFont: string): Promise<void> {
+  if (!epubFont) return
+  try {
+    await api().setEpubFont(epubFont)
+    store().set({ epubFont })
+  } catch (err) {
+    // 설정은 지우지 않는다 — 글꼴을 다시 설치하면 다음 실행부터 돌아온다
+    console.error('읽기 글꼴 복원 실패 — 책 기본 글꼴로 엽니다:', err)
   }
 }
 
@@ -124,6 +137,91 @@ export async function setEpubTheme(theme: EpubTheme): Promise<void> {
   } catch (err) {
     s.showToast(`테마 변경 실패: ${errMsg(err)}`)
   }
+}
+
+// ── 읽기 글꼴 ──
+
+let fontsLoading: Promise<void> | null = null
+
+/** 설치된 한글 글꼴 목록 (툴바 글꼴 칸) — 한 번만 불러온다 */
+export function loadReadingFonts(): Promise<void> {
+  if (!fontsLoading) {
+    fontsLoading = api()
+      .listReadingFonts()
+      .then((readingFonts) => store().set({ readingFonts }))
+      .catch((err) => {
+        fontsLoading = null
+        store().set({ readingFonts: [] })
+        console.error('글꼴 목록 실패:', err)
+      })
+  }
+  return fontsLoading
+}
+
+let fontChanging = false
+/** 바꾸는 도중 또 고른 글꼴 — 끝나면 마지막 것만 적용한다 */
+let queuedFont: string | null = null
+
+/**
+ * EPUB 본문 글꼴 변경 — mupdf 글꼴·CSS가 전역이라 열린 EPUB 탭이 모두 다시 나뉜다.
+ * 탭마다 쪽 위치를 비율로 옮기고 밑줄 위치를 다시 찾는다.
+ */
+export async function setEpubFont(id: string): Promise<void> {
+  if (fontChanging) {
+    queuedFont = id
+    return
+  }
+  const s = store()
+  if (s.epubFont === id) return
+  fontChanging = true
+  const prev = s.epubFont
+  s.set({ epubFont: id })
+  const busyTimer = setTimeout(() => store().set({ busy: '글꼴에 맞춰 쪽을 다시 나누는 중...' }), 250)
+  try {
+    const relaid = await api().setEpubFont(id)
+    for (const doc of relaid) applyRelayout(doc)
+    void api().libraryPatchSettings({ epubFont: id })
+  } catch (err) {
+    store().set({ epubFont: prev })
+    s.showToast(`글꼴 변경 실패: ${errMsg(err)}`)
+    await resyncEpubTabs() // 엔진이 어디까지 바뀌었든 화면을 엔진 상태에 맞춘다
+  } finally {
+    fontChanging = false
+    clearTimeout(busyTimer)
+    store().set({ busy: null })
+  }
+  const next = queuedFont
+  queuedFont = null
+  if (next !== null && next !== store().epubFont) await setEpubFont(next)
+}
+
+/** 열린 EPUB 탭마다 엔진의 현재 정보로 다시 맞춘다 (글꼴 변경 실패 뒤) */
+async function resyncEpubTabs(): Promise<void> {
+  const s = store()
+  const epubIds = s.tabs
+    .filter((t) => (t.id === s.activeTabId ? s.info?.kind : t.snapshot.info?.kind) === 'epub')
+    .map((t) => t.docId)
+  for (const docId of epubIds) {
+    try {
+      applyRelayout({ docId, info: await api().engine(docId, 'docInfo', {}) })
+    } catch (err) {
+      console.error('EPUB 탭 다시 맞추기 실패:', err)
+    }
+  }
+}
+
+function applyRelayout({ docId, info }: RelaidDoc): void {
+  if (!store().tabs.some((t) => t.docId === docId)) return
+  clearDocImages(docId)
+  let page = 0
+  store().updateDoc(docId, (slice) => {
+    const oldCount = slice.info?.pageCount ?? info.pageCount
+    page = mapPageAfterRelayout(slice.currentPage, oldCount, info.pageCount)
+    return { info, epoch: slice.epoch + 1, selection: null, currentPage: page }
+  })
+  // 비활성 탭은 돌아올 때 switchTab이 currentPage로 스크롤한다
+  if (store().activeDocId === docId) store().gotoPage(page)
+  void resolveEpubNotes(docId)
 }
 
 function repaintEpubTabs(): void {

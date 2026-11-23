@@ -29,6 +29,16 @@
 .tb-themes {
   margin-left: 4px;
 }
+.tb-epub-font {
+  height: 26px;
+  max-width: 132px;
+  margin-left: 4px;
+  background: #1c1d20;
+  border: 1px solid #4a4c52;
+  color: #e2e4e8;
+  border-radius: 4px;
+  padding: 0 4px;
+}
 .tb-theme {
   width: 24px;
   height: 24px;
@@ -368,8 +378,8 @@
 }
 .card-bgs {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 5px;
 }
 .card-bg {
   aspect-ratio: 2 / 3;

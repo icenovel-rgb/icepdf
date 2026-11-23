@@ -689,9 +689,12 @@ input {
   gap: 2px;
 }
 .tb-page {
+  /* 폭은 PageInput이 전체 쪽 수 자릿수로 정한다 */
   width: 46px;
   height: 26px;
+  padding: 0 6px;
   text-align: center;
+  font-variant-numeric: tabular-nums;
   background: #1c1d20;
   border: 1px solid #4a4c52;
   color: #e2e4e8;

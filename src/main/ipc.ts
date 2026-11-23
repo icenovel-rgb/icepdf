@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { closeDoc, engineCall, openDoc } from './engine/proxy'
 import { checkForUpdate } from './update-check'
+import { findReadingFont, readingFontOptions } from './fonts'
+import { isReadingFontId } from '../shared/reading'
 import type { ConvertResult, EngineOpName } from '../shared/types'
 
 // ── kordoc 변환 워커 RPC ──
@@ -99,7 +101,24 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle('engine:call', async (_e, docId: number, op: EngineOpName, args: Record<string, unknown>) => {
+    // 글꼴 파일 경로는 렌더러가 아니라 메인이 훑은 목록에서만 (epub:setFont)
+    if (typeof op !== 'string') throw new Error('잘못된 연산입니다')
+    if (op === 'setReadingFont') throw new Error('epub:setFont를 사용하세요')
     return engineCall(docId, op, args as never)
+  })
+
+  // ── EPUB 읽기 글꼴 ──
+
+  /** 설치된 한글 글꼴 목록 (처음 한 번 글꼴 폴더를 훑는다) */
+  ipcMain.handle('fonts:list', () => readingFontOptions())
+
+  /** 글꼴 적용 — id는 가족 이름, ''이면 책 기본 글꼴. 열린 EPUB들의 새 정보를 돌려준다 */
+  ipcMain.handle('epub:setFont', async (_e, id: unknown) => {
+    if (!isReadingFontId(id)) throw new Error('잘못된 글꼴입니다')
+    if (!id) return engineCall(0, 'setReadingFont', { font: null })
+    const family = await findReadingFont(id)
+    if (!family) throw new Error(`글꼴을 찾지 못했습니다: ${id}`)
+    return engineCall(0, 'setReadingFont', { font: { regular: family.regular, bold: family.bold } })
   })
 
   ipcMain.handle('doc:open', async (_e, path: string) => {

@@ -183,7 +183,7 @@ await win.locator('.note-row').first().locator('button[title="문장 카드 이�
 await sleep(500)
 report('카드 창 열림 + 문장 채움', await win.locator('.card-modal').isVisible())
 report('카드 문장 = 밑줄 원문', (await win.locator('.card-modal textarea').inputValue()) === (await state(win)).notes[0].text)
-await win.locator('.card-bg').nth(6).click() // 밤하늘
+await win.locator('.card-bg[title="밤하늘"]').click()
 await win.locator('.card-seg button', { hasText: '정사각' }).click()
 await sleep(700)
 const canvasInfo = await st(() => {

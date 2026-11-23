@@ -33,6 +33,40 @@ export function isEpubTheme(v: unknown): v is EpubTheme {
   return v === 'light' || v === 'sepia' || v === 'dark'
 }
 
+// ── EPUB 읽기 글꼴 ──
+
+/** 글꼴 파일 안의 한 면 (TTC는 index로 구분) */
+export interface ReadingFontFile {
+  path: string
+  index: number
+}
+
+/** 툴바 글꼴 목록 한 줄 — id는 글꼴 가족 이름, label은 한국어 이름이 있으면 그것 */
+export interface ReadingFontOption {
+  id: string
+  label: string
+  recommended: boolean
+}
+
+/** CSS에 쓰는 가상 가족 이름 — mupdf가 이 이름으로 글꼴을 요청하면 고른 글꼴을 돌려준다 */
+export const READING_FONT_FAMILY = 'ICEPDFReading'
+
+/**
+ * 고른 글꼴로 본문을 덮는 CSS. 고정폭(코드)은 그대로 두고, 글꼴이 없는 글자는
+ * mupdf 기본 대체 글꼴(serif)로 넘어간다. 글꼴은 쪽 나눔을 바꾸므로 문서를 열 때부터 걸려 있어야 한다.
+ */
+export function readingFontCss(): string {
+  return (
+    `html,body,body *{font-family:"${READING_FONT_FAMILY}",serif !important}` +
+    'pre,code,kbd,samp,tt,pre *,code *{font-family:monospace !important}'
+  )
+}
+
+/** IPC로 받은 글꼴 id — 가족 이름(빈 문자열 = 책 기본 글꼴) */
+export function isReadingFontId(v: unknown): v is string {
+  return typeof v === 'string' && v.length <= 200 && !/[\u0000-\u001f]/.test(v)
+}
+
 // ── 밑줄 ──
 
 export type NoteStyle = 'highlight' | 'underline'
@@ -111,6 +145,8 @@ export interface BookRecord {
 
 export interface LibrarySettings {
   epubTheme: EpubTheme
+  /** EPUB 본문 글꼴 가족 이름 ('' = 책 기본 글꼴) */
+  epubFont: string
 }
 
 export interface LibraryFile {
@@ -171,7 +207,10 @@ export function sanitizeBookPatch(input: unknown): Partial<BookRecord> {
 
 export function sanitizeSettings(input: unknown): Partial<LibrarySettings> {
   if (!isObj(input)) return {}
-  return isEpubTheme(input.epubTheme) ? { epubTheme: input.epubTheme } : {}
+  const out: Partial<LibrarySettings> = {}
+  if (isEpubTheme(input.epubTheme)) out.epubTheme = input.epubTheme
+  if (isReadingFontId(input.epubFont)) out.epubFont = input.epubFont
+  return out
 }
 
 /** 기존 기록에 패치를 덮는다 (패치하지 않은 필드는 유지) */
@@ -204,7 +243,7 @@ export function removeNoteFrom(prev: BookRecord | undefined, id: string, now: nu
 
 /** 디스크에서 읽은 JSON — 손상돼도 앱이 뜨게 관용적으로 */
 export function parseLibrary(json: unknown): LibraryFile {
-  const lib: LibraryFile = { version: 1, settings: { epubTheme: 'light' }, books: {} }
+  const lib: LibraryFile = { version: 1, settings: { epubTheme: 'light', epubFont: '' }, books: {} }
   if (!isObj(json)) return lib
   lib.settings = { ...lib.settings, ...sanitizeSettings(json.settings) }
   if (isObj(json.books)) {

@@ -1,7 +1,7 @@
 /** 렌더러·메인·워커가 공유하는 타입. 좌표는 전부 fitz 공간(좌상단 원점, y 아래, 72dpi 포인트). */
 import type { DocKind } from './doc-kind'
 import type { TextAnchor } from './anchor'
-import type { NoteStyle } from './reading'
+import type { NoteStyle, ReadingFontFile } from './reading'
 
 export interface PageInfo {
   width: number
@@ -97,6 +97,18 @@ export interface ConvertResult {
   error?: string
 }
 
+/** EPUB 읽기 글꼴 — 보통·굵게 면 (굵게가 없으면 보통으로 대신) */
+export interface ReadingFontFaces {
+  regular: ReadingFontFile
+  bold: ReadingFontFile | null
+}
+
+/** 글꼴을 바꿔 쪽을 다시 나눈 문서 하나 */
+export interface RelaidDoc {
+  docId: number
+  info: DocInfo
+}
+
 /** 엔진 워커 RPC 연산 이름 → 인자/반환 타입 매핑 */
 export interface EngineOps {
   open: { args: { path: string }; result: DocInfo }
@@ -127,6 +139,8 @@ export interface EngineOps {
   }
   /** EPUB 읽기 테마 (전역 — 열린 EPUB 전체 재배치) */
   setTheme: { args: { theme: string }; result: null }
+  /** EPUB 본문 글꼴 (전역 — 열린 EPUB을 모두 다시 열어 쪽을 다시 나눈다). null = 책 기본 글꼴 */
+  setReadingFont: { args: { font: ReadingFontFaces | null }; result: RelaidDoc[] }
   noteAnchor: { args: { page: number; quads: Quad[] }; result: TextAnchor | null }
   resolveNotes: { args: { notes: { id: string; anchor: TextAnchor }[] }; result: ResolvedNoteInfo[] }
   listHighlights: { args: Record<string, never>; result: PdfHighlightInfo[] }

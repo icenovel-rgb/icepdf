@@ -89,6 +89,10 @@ try {
 } catch (err) {
   report('예외 발생', false, String(err))
 } finally {
+  // 편집한 채 닫으면 "저장할까요" 대화상자가 떠 멈추고, 저장을 고르면 샘플이 바뀐다 → 저장 안 함
+  await app.evaluate(({ dialog }) => {
+    dialog.showMessageBox = async () => ({ response: 1 })
+  }).catch(() => {})
   await app.close().catch(() => {})
 }
 
